@@ -1,0 +1,25 @@
+# Secrets / local config
+.env
+rclone.conf
+
+# Local data and outputs
+*.sqlite
+*.sqlite-journal
+*.gpkg
+outputs/
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/staging/
+renv/local/
+*.Rcheck/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
