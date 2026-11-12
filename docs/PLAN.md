@@ -147,8 +147,8 @@ run_datasets  run_id, dataset_id, sql_text, duration_s,
 
 Docker Desktop (WSL2) on Windows, via `docker compose`.
 
-- `app` — built on `rocker/geospatial` (R, sf, GDAL, PROJ) + rclone + renv
-  packages; bound to `127.0.0.1:3838`. Volumes:
+- `app` — built on `rocker/geospatial:4.4.2` (R, sf, GDAL, PROJ) + rclone;
+  bound to `127.0.0.1:3838`. Volumes:
   - `${CIA_DATA_DIR:-${LOCALAPPDATA}/cia-data-requests}` → `/data`
   - rclone config (to be finalised when the upload stage is tested; likely
     `%APPDATA%\rclone` → `/config/rclone`, writable for token refresh)
@@ -156,6 +156,12 @@ Docker Desktop (WSL2) on Windows, via `docker compose`.
   synthetic schema identical to production.
 - `tests` — runs the test suite against the sidecar (`profiles: [test]`); CI
   runs the same command.
+- `app-dev` — the app against the sidecar with source mounted live
+  (`profiles: [dev]`, port 3839).
+
+Package versions: versioned rocker images pin CRAN to a dated Posit Package
+Manager snapshot, so packages installed in the Dockerfile resolve to fixed
+versions. This replaces renv.
 
 ## Testing
 
@@ -175,7 +181,7 @@ threshold, and a generated hex grid in EPSG:3338.
 
 ## Build order
 
-1. Repo scaffold, Docker/compose, `.env.example`, synthetic PostGIS seed, CI.
+1. ~~Repo scaffold, Docker/compose, `.env.example`, synthetic PostGIS seed, CI.~~ Done.
 2. Config + spec + SQL builder, with conservation and gate tests.
 3. Execution + suppression stats.
 4. SQLite store.

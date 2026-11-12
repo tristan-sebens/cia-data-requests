@@ -1,0 +1,18 @@
+Package: ciarequests
+Title: Build, Preview and Package Confidentiality-Safe CIA Data Requests
+Version: 0.0.0.9000
+Authors@R: person("Tristan", "Sebens", email = "tristan.sebens@noaa.gov", role = c("aut", "cre"))
+Description: A local Shiny app that turns data request specifications
+    (filters and grouping) into gridded, apportioned catch aggregates from the
+    CIA database, enforces the confidentiality rule, and packages approved
+    results as a GeoPackage for delivery.
+License: file LICENSE
+Encoding: UTF-8
+Imports:
+    DBI,
+    RPostgres,
+    shiny
+Suggests:
+    testthat (>= 3.0.0),
+    withr
+Config/testthat/edition: 3

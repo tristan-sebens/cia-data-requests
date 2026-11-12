@@ -1,0 +1,92 @@
+name: cia-data-requests
+
+# Usage
+#   Normal use (real database, settings in .env):
+#     docker compose up -d app            -> http://127.0.0.1:3838
+#   Tests against the synthetic PostGIS sidecar:
+#     docker compose --profile test run --rm tests
+#   UI development against synthetic data (source mounted live):
+#     docker compose --profile dev up     -> http://127.0.0.1:3839
+#
+# Rebuild the image after changing R code (except in dev, which mounts source):
+#     docker compose build
+
+x-image: &image
+  image: cia-data-requests:latest
+  build: .
+
+x-synthetic-db: &synthetic-db
+  CIA_PG_HOST: postgis
+  CIA_PG_PORT: "5432"
+  CIA_PG_DB: cia_test
+  CIA_PG_USER: cia
+  CIA_PG_PASSWORD: cia
+  CIA_PG_SCHEMA: data
+
+services:
+  app:
+    <<: *image
+    ports:
+      - "127.0.0.1:3838:3838"   # reachable from this machine only
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      CIA_REQUESTS_DB: /data/requests.sqlite
+      CIA_OUTPUT_DIR: /data/outputs
+    volumes:
+      # Persistent SQLite database and outputs. Defaults to %LOCALAPPDATA%\cia-data-requests
+      # (Local, not Roaming, so a domain profile never syncs a live database).
+      - ${CIA_DATA_DIR:-${LOCALAPPDATA}/cia-data-requests}:/data
+    restart: unless-stopped
+
+  postgis:
+    image: postgis/postgis:16-3.4
+    profiles: [test, dev]
+    environment:
+      POSTGRES_DB: cia_test
+      POSTGRES_USER: cia
+      POSTGRES_PASSWORD: cia
+    volumes:
+      - ./docker/postgis-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:55432:5432"  # optional: inspect the synthetic DB from pgAdmin
+    healthcheck:
+      # The init scripts run against a temporary server first; checking for the
+      # seeded table (not just pg_isready) avoids reporting healthy too early.
+      test: ["CMD-SHELL", "psql -U cia -d cia_test -tAc 'SELECT 1 FROM data.haul_catch LIMIT 1' | grep -q 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+
+  tests:
+    <<: *image
+    profiles: [test]
+    depends_on:
+      postgis:
+        condition: service_healthy
+    environment:
+      <<: *synthetic-db
+    volumes:
+      - ./:/app
+    command: ["Rscript", "-e", "testthat::test_local('/app', stop_on_failure = TRUE)"]
+
+  app-dev:
+    <<: *image
+    profiles: [dev]
+    depends_on:
+      postgis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3839:3838"
+    environment:
+      <<: *synthetic-db
+      CIA_REQUESTS_DB: /data/requests.sqlite
+      CIA_OUTPUT_DIR: /data/outputs
+    volumes:
+      - ./:/app
+      - dev-data:/data
+    command: ["Rscript", "-e", "pkgload::load_all('/app'); run_app(host = '0.0.0.0', port = 3838)"]
+
+volumes:
+  dev-data:

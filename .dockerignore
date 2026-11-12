@@ -1,0 +1,10 @@
+.git
+.github
+.env
+*.sqlite
+*.sqlite-journal
+*.gpkg
+outputs/
+.Rproj.user/
+.Rhistory
+.RData

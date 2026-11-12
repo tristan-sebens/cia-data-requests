@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Only used by the app service's volume default; silences a compose warning on Linux.
+      LOCALAPPDATA: /tmp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker compose --profile test build tests
+
+      - name: Run tests against synthetic PostGIS
+        run: docker compose --profile test run --rm tests
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile test down -v
