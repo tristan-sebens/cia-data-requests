@@ -64,9 +64,18 @@ ref_aggregate <- function(con, spec, cfg, gated = TRUE, min_vessels = 3) {
   cells <- ref_grid(con, grid)
 
   hauls$haul_area <- as.numeric(sf::st_area(hauls))
-  inter <- suppressWarnings(sf::st_intersection(hauls[, c("haul_id", "haul_area")], cells))
+  inter <- suppressWarnings(sf::st_intersection(hauls[, c("haul_id", "haul_type", "haul_area")], cells))
   inter$p_raw <- as.numeric(sf::st_area(inter)) / inter$haul_area
-  alloc <- sf::st_drop_geometry(inter)[inter$p_raw > 0, c("haul_id", "grid_id", "p_raw")]
+  alloc <- sf::st_drop_geometry(inter)[inter$p_raw > 0, c("haul_id", "haul_type", "grid_id", "p_raw")]
+
+  # Trim small overlaps, except exempt haul types and hauls with no large overlap.
+  min_share <- cfg$apportionment$min_share %||% 0
+  if (min_share > 0) {
+    p_max <- ave(alloc$p_raw, alloc$haul_id, FUN = max)
+    exempt <- alloc$haul_type %in% unlist(cfg$apportionment$exempt_haul_types)
+    alloc <- alloc[alloc$p_raw >= min_share | exempt | p_max < min_share, ]
+  }
+  alloc$haul_type <- NULL
   alloc$p <- alloc$p_raw / ave(alloc$p_raw, alloc$haul_id, FUN = sum)
 
   attrs <- sf::st_drop_geometry(hauls)

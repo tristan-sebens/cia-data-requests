@@ -28,3 +28,14 @@ fields:
   processing_sector:       {table: hauls,      kind: set}
   species_code:            {table: haul_catch, kind: set}
   species_group_code:      {table: haul_catch, kind: set}
+
+# How haul footprints are split across grid cells.
+#   min_share: overlaps covering less than this share of a haul's area are
+#     dropped (no catch, vessel not counted there) and the remaining shares
+#     renormalised. A haul with no overlap at or above the threshold keeps all
+#     of its overlaps. 0 disables trimming.
+#   exempt_haul_types: haul_type values never trimmed (area hauls span a whole
+#     stat area, so every cell would fall under the threshold on fine grids).
+apportionment:
+  min_share: 0.05
+  exempt_haul_types: [AREA]

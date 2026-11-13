@@ -5,11 +5,12 @@
 #'
 #' 1. `hauls_f`     hauls matching the haul-level filters
 #' 2. `overlay`     intersect haul polygons with grid cells; share of haul area
-#' 3. `alloc`       renormalise shares so each haul's shares sum to 1
-#' 4. `apportioned` join catch, apply catch-level filters, multiply by share
-#' 5. aggregate by grid cell + grouping fields, applying confidentiality rules
+#' 3. `trimmed`     drop small overlaps (`apportionment.min_share`), except exempt haul types
+#' 4. `alloc`       renormalise shares so each haul's shares sum to 1
+#' 5. `apportioned` join catch, apply catch-level filters, multiply by share
+#' 6. aggregate by grid cell + grouping fields, applying confidentiality rules
 #'
-#' (With a precomputed `allocation_table` for the grid, steps 2-3 read it instead.)
+#' (With a precomputed `allocation_table` for the grid, steps 2-4 read it instead.)
 #'
 #' @param spec A [dataset_spec()].
 #' @param cfg A [load_config()] result.
@@ -63,13 +64,20 @@ sql_parts <- function(spec, cfg) {
   haul_groups   <- spec$group_by[field_table[spec$group_by] == "hauls"]
   catch_groups  <- spec$group_by[field_table[spec$group_by] == "haul_catch"]
 
-  # Haul columns needed downstream: vessel, haul-level grouping fields, and any
-  # columns the confidentiality rules count or filter on.
-  rule_cols <- unlist(lapply(cfg$rules, function(r) c(r$column, r$filter$column)))
-  haul_cols <- unique(c(H$vessel, haul_groups, rule_cols))
-  haul_cols <- setdiff(haul_cols, c("haul_id", "haul_polygon"))
-
+  # Small-overlap trimming (see schema.yaml `apportionment`)
+  A <- cfg$apportionment
+  min_share <- A$min_share %||% 0
+  exempt <- as.character(unlist(A$exempt_haul_types))
+  trim <- min_share > 0
   use_alloc_table <- !is.null(grid$allocation_table)
+
+  # Haul columns needed downstream: vessel, haul-level grouping fields, any
+  # columns the confidentiality rules count or filter on, and haul type if the
+  # trimming step exempts some haul types.
+  rule_cols <- unlist(lapply(cfg$rules, function(r) c(r$column, r$filter$column)))
+  trim_cols <- if (trim && length(exempt) && !use_alloc_table) H$haul_type
+  haul_cols <- unique(c(H$vessel, haul_groups, rule_cols, trim_cols))
+  haul_cols <- setdiff(haul_cols, c("haul_id", "haul_polygon"))
 
   hauls_f <- paste0(
     "-- 1. Hauls matching the haul-level filters\n",
@@ -84,7 +92,8 @@ sql_parts <- function(spec, cfg) {
 
   if (use_alloc_table) {
     alloc <- paste0(
-      "-- 2-3. Each haul's share of its area in each grid cell (precomputed, renormalised)\n",
+      "-- 2-4. Each haul's share of its catch in each grid cell (precomputed:\n",
+      "--      overlay, small-overlap trimming and renormalisation already applied)\n",
       "alloc AS (\n",
       "    SELECT t.haul_id, t.grid_id, t.p\n",
       "    FROM ", grid$schema, ".", grid$allocation_table, " t\n",
@@ -95,27 +104,45 @@ sql_parts <- function(spec, cfg) {
     alloc_ctes <- alloc
   } else {
     overlay <- paste0(
-      "-- 2. Overlay the grid: share of each haul's area falling in each cell\n",
+      "-- 2. Overlay the grid: share of each haul's area falling in each cell.\n",
+      "--    Zero-area overlaps (cells merely touching a haul's edge) are dropped.\n",
       "overlay AS (\n",
-      "    SELECT f.haul_id,\n",
-      "           g.", grid$id, " AS grid_id,\n",
-      "           ST_Area(ST_Intersection(f.haul_polygon, g.", grid$geom, ")) / ST_Area(f.haul_polygon) AS p_raw\n",
-      "    FROM hauls_f f\n",
-      "    JOIN ", grid_tbl, " g ON ST_Intersects(f.haul_polygon, g.", grid$geom, ")\n",
-      ")"
-    )
-    alloc <- paste0(
-      "-- 3. Renormalise so each haul's shares sum to 1 (covers hauls extending past\n",
-      "--    the grid edge, and rounding). Zero-area overlaps (cells merely touching a\n",
-      "--    haul's edge) are dropped so they neither receive catch nor count vessels.\n",
-      "alloc AS (\n",
-      "    SELECT haul_id, grid_id,\n",
-      "           p_raw / SUM(p_raw) OVER (PARTITION BY haul_id) AS p\n",
-      "    FROM overlay\n",
+      "    SELECT * FROM (\n",
+      "        SELECT f.haul_id,\n",
+      if (length(trim_cols)) paste0("               f.", trim_cols, ",\n"),
+      "               g.", grid$id, " AS grid_id,\n",
+      "               ST_Area(ST_Intersection(f.haul_polygon, g.", grid$geom, ")) / ST_Area(f.haul_polygon) AS p_raw\n",
+      "        FROM hauls_f f\n",
+      "        JOIN ", grid_tbl, " g ON ST_Intersects(f.haul_polygon, g.", grid$geom, ")\n",
+      "    ) o\n",
       "    WHERE p_raw > 0\n",
       ")"
     )
-    alloc_ctes <- c(overlay, alloc)
+    share_lit <- format(min_share, scientific = FALSE)
+    trimmed <- if (trim) paste0(
+      "-- 3. Drop overlaps covering less than ", 100 * min_share, "% of a haul's area, so slivers\n",
+      "--    neither receive catch nor count the vessel toward that cell.\n",
+      if (length(exempt)) paste0("--    Exempt: ", paste(comment_safe(exempt), collapse = ", "),
+                                 " hauls (their footprint is a whole statistical area).\n"),
+      "--    A haul with no overlap at or above the threshold keeps all of its overlaps.\n",
+      "trimmed AS (\n",
+      "    SELECT haul_id, grid_id, p_raw\n",
+      "    FROM (SELECT o.*, MAX(p_raw) OVER (PARTITION BY haul_id) AS p_max FROM overlay o) o\n",
+      "    WHERE p_raw >= ", share_lit, "\n",
+      if (length(exempt)) paste0("       OR ", H$haul_type, " IN (", paste(sql_quote(exempt), collapse = ", "), ")\n"),
+      "       OR p_max < ", share_lit, "\n",
+      ")"
+    )
+    alloc <- paste0(
+      "-- 4. Renormalise so each haul's shares sum to 1 (covers trimmed overlaps,\n",
+      "--    hauls extending past the grid edge, and rounding).\n",
+      "alloc AS (\n",
+      "    SELECT haul_id, grid_id,\n",
+      "           p_raw / SUM(p_raw) OVER (PARTITION BY haul_id) AS p\n",
+      "    FROM ", if (trim) "trimmed" else "overlay", "\n",
+      ")"
+    )
+    alloc_ctes <- c(overlay, trimmed, alloc)
   }
 
   apportioned_cols <- c(
@@ -126,7 +153,7 @@ sql_parts <- function(spec, cfg) {
     paste0("c.", C$count, " * a.p AS count_n")
   )
   apportioned <- paste0(
-    "-- 4. Join catch, apply catch-level filters, apportion catch by share\n",
+    "-- 5. Join catch, apply catch-level filters, apportion catch by share\n",
     "apportioned AS (\n",
     "    SELECT ", paste(apportioned_cols, collapse = ",\n           "), "\n",
     "    FROM alloc a\n",
@@ -141,7 +168,7 @@ sql_parts <- function(spec, cfg) {
   rule_names <- vapply(cfg$rules, `[[`, "", "name")
 
   agg_deliver <- paste0(
-    "-- 5. Aggregate by grid cell and grouping fields. Confidentiality rules:\n",
+    "-- 6. Aggregate by grid cell and grouping fields. Confidentiality rules:\n",
     "--    groups that fail any rule are not returned.\n",
     "agg AS (\n",
     "    SELECT ", paste(group_cols, collapse = ", "), ",\n",
@@ -154,7 +181,7 @@ sql_parts <- function(spec, cfg) {
   )
 
   groups_diag <- paste0(
-    "-- 5. Aggregate by grid cell and grouping fields, evaluating the\n",
+    "-- 6. Aggregate by grid cell and grouping fields, evaluating the\n",
     "--    confidentiality rules per group instead of filtering on them.\n",
     "groups AS (\n",
     "    SELECT ", paste(group_cols, collapse = ", "), ",\n",
@@ -276,6 +303,24 @@ sql_quote <- function(x) {
 comment_safe <- function(x) gsub("[[:cntrl:]]+", " ", x)
 
 #' @noRd
+method_lines <- function(cfg) {
+  A <- cfg$apportionment
+  min_share <- A$min_share %||% 0
+  exempt <- as.character(unlist(A$exempt_haul_types))
+  c(
+    "Method: each haul's catch is apportioned across the grid cells its footprint",
+    "overlaps, in proportion to the overlapping area. Area-only hauls use the full",
+    "statistical area as their footprint.",
+    if (min_share > 0) c(
+      paste0("Overlaps covering less than ", 100 * min_share, "% of a haul's area are dropped",
+             if (length(exempt)) paste0(" (except ", paste(exempt, collapse = ", "), " hauls)") else "",
+             "."),
+      "Shares are renormalised to sum to 1 per haul."
+    ) else "Shares are renormalised to sum to 1 per haul."
+  )
+}
+
+#' @noRd
 sql_header <- function(spec, cfg, mode) {
   grid <- cfg$grids[[spec$grid]]
   filters <- if (length(spec$filters)) {
@@ -299,9 +344,7 @@ sql_header <- function(spec, cfg, mode) {
     "Confidentiality:",
     paste0("  - ", rules),
     "",
-    "Method: each haul's catch is apportioned across the grid cells its footprint",
-    "overlaps, in proportion to the overlapping area (shares renormalised to sum",
-    "to 1 per haul). Area-only hauls use the full statistical area as footprint.",
+    method_lines(cfg),
     "",
     "Units:     catch_weight_mt = metric tons; catch_count = number of fish.",
     "CRS:       EPSG:3338 (NAD83 / Alaska Albers).",

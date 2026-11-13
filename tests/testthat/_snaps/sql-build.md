@@ -15,8 +15,10 @@
       --   - Each record aggregates catch from at least 3 distinct vessels.
       -- 
       -- Method: each haul's catch is apportioned across the grid cells its footprint
-      -- overlaps, in proportion to the overlapping area (shares renormalised to sum
-      -- to 1 per haul). Area-only hauls use the full statistical area as footprint.
+      -- overlaps, in proportion to the overlapping area. Area-only hauls use the full
+      -- statistical area as their footprint.
+      -- Overlaps covering less than 5% of a haul's area are dropped (except AREA hauls).
+      -- Shares are renormalised to sum to 1 per haul.
       -- 
       -- Units:     catch_weight_mt = metric tons; catch_count = number of fish.
       -- CRS:       EPSG:3338 (NAD83 / Alaska Albers).
@@ -28,34 +30,50 @@
                  h.haul_polygon,
                  h.vessel_id,
                  h.year,
-                 h.management_program_code
+                 h.management_program_code,
+                 h.haul_type
           FROM data.hauls h
           WHERE h.gear_code IN ('TRW')
             AND h.year BETWEEN 2019 AND 2023
       ),
-      -- 2. Overlay the grid: share of each haul's area falling in each cell
+      -- 2. Overlay the grid: share of each haul's area falling in each cell.
+      --    Zero-area overlaps (cells merely touching a haul's edge) are dropped.
       overlay AS (
-          SELECT f.haul_id,
-                 g.hexid AS grid_id,
-                 ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
-          FROM hauls_f f
-          JOIN data.hex_8km g ON ST_Intersects(f.haul_polygon, g.shape)
+          SELECT * FROM (
+              SELECT f.haul_id,
+                     f.haul_type,
+                     g.hexid AS grid_id,
+                     ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
+              FROM hauls_f f
+              JOIN data.hex_8km g ON ST_Intersects(f.haul_polygon, g.shape)
+          ) o
+          WHERE p_raw > 0
       ),
-      -- 3. Renormalise so each haul's shares sum to 1 (covers hauls extending past
-      --    the grid edge, and rounding). Zero-area overlaps (cells merely touching a
-      --    haul's edge) are dropped so they neither receive catch nor count vessels.
+      -- 3. Drop overlaps covering less than 5% of a haul's area, so slivers
+      --    neither receive catch nor count the vessel toward that cell.
+      --    Exempt: AREA hauls (their footprint is a whole statistical area).
+      --    A haul with no overlap at or above the threshold keeps all of its overlaps.
+      trimmed AS (
+          SELECT haul_id, grid_id, p_raw
+          FROM (SELECT o.*, MAX(p_raw) OVER (PARTITION BY haul_id) AS p_max FROM overlay o) o
+          WHERE p_raw >= 0.05
+             OR haul_type IN ('AREA')
+             OR p_max < 0.05
+      ),
+      -- 4. Renormalise so each haul's shares sum to 1 (covers trimmed overlaps,
+      --    hauls extending past the grid edge, and rounding).
       alloc AS (
           SELECT haul_id, grid_id,
                  p_raw / SUM(p_raw) OVER (PARTITION BY haul_id) AS p
-          FROM overlay
-          WHERE p_raw > 0
+          FROM trimmed
       ),
-      -- 4. Join catch, apply catch-level filters, apportion catch by share
+      -- 5. Join catch, apply catch-level filters, apportion catch by share
       apportioned AS (
           SELECT a.grid_id,
                  f.vessel_id,
                  f.year,
                  f.management_program_code,
+                 f.haul_type,
                  c.species_group_code,
                  c.species_code,
                  c.weight * a.p AS weight_mt,
@@ -65,7 +83,7 @@
           JOIN data.haul_catch c ON c.haul_id = a.haul_id
           WHERE c.species_group_code IN ('AKFL', 'FLAT')
       ),
-      -- 5. Aggregate by grid cell and grouping fields. Confidentiality rules:
+      -- 6. Aggregate by grid cell and grouping fields. Confidentiality rules:
       --    groups that fail any rule are not returned.
       agg AS (
           SELECT grid_id, year, management_program_code, species_group_code, species_code,
@@ -99,8 +117,10 @@
       --   - Each record aggregates catch from at least 3 distinct vessels.
       -- 
       -- Method: each haul's catch is apportioned across the grid cells its footprint
-      -- overlaps, in proportion to the overlapping area (shares renormalised to sum
-      -- to 1 per haul). Area-only hauls use the full statistical area as footprint.
+      -- overlaps, in proportion to the overlapping area. Area-only hauls use the full
+      -- statistical area as their footprint.
+      -- Overlaps covering less than 5% of a haul's area are dropped (except AREA hauls).
+      -- Shares are renormalised to sum to 1 per haul.
       -- 
       -- Units:     catch_weight_mt = metric tons; catch_count = number of fish.
       -- CRS:       EPSG:3338 (NAD83 / Alaska Albers).
@@ -111,31 +131,47 @@
           SELECT h.haul_id,
                  h.haul_polygon,
                  h.vessel_id,
-                 h.year
+                 h.year,
+                 h.haul_type
           FROM data.hauls h
       ),
-      -- 2. Overlay the grid: share of each haul's area falling in each cell
+      -- 2. Overlay the grid: share of each haul's area falling in each cell.
+      --    Zero-area overlaps (cells merely touching a haul's edge) are dropped.
       overlay AS (
-          SELECT f.haul_id,
-                 g.hexid AS grid_id,
-                 ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
-          FROM hauls_f f
-          JOIN data.hex_20km g ON ST_Intersects(f.haul_polygon, g.shape)
+          SELECT * FROM (
+              SELECT f.haul_id,
+                     f.haul_type,
+                     g.hexid AS grid_id,
+                     ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
+              FROM hauls_f f
+              JOIN data.hex_20km g ON ST_Intersects(f.haul_polygon, g.shape)
+          ) o
+          WHERE p_raw > 0
       ),
-      -- 3. Renormalise so each haul's shares sum to 1 (covers hauls extending past
-      --    the grid edge, and rounding). Zero-area overlaps (cells merely touching a
-      --    haul's edge) are dropped so they neither receive catch nor count vessels.
+      -- 3. Drop overlaps covering less than 5% of a haul's area, so slivers
+      --    neither receive catch nor count the vessel toward that cell.
+      --    Exempt: AREA hauls (their footprint is a whole statistical area).
+      --    A haul with no overlap at or above the threshold keeps all of its overlaps.
+      trimmed AS (
+          SELECT haul_id, grid_id, p_raw
+          FROM (SELECT o.*, MAX(p_raw) OVER (PARTITION BY haul_id) AS p_max FROM overlay o) o
+          WHERE p_raw >= 0.05
+             OR haul_type IN ('AREA')
+             OR p_max < 0.05
+      ),
+      -- 4. Renormalise so each haul's shares sum to 1 (covers trimmed overlaps,
+      --    hauls extending past the grid edge, and rounding).
       alloc AS (
           SELECT haul_id, grid_id,
                  p_raw / SUM(p_raw) OVER (PARTITION BY haul_id) AS p
-          FROM overlay
-          WHERE p_raw > 0
+          FROM trimmed
       ),
-      -- 4. Join catch, apply catch-level filters, apportion catch by share
+      -- 5. Join catch, apply catch-level filters, apportion catch by share
       apportioned AS (
           SELECT a.grid_id,
                  f.vessel_id,
                  f.year,
+                 f.haul_type,
                  c.species_code,
                  c.weight * a.p AS weight_mt,
                  c.count * a.p AS count_n
@@ -144,7 +180,7 @@
           JOIN data.haul_catch c ON c.haul_id = a.haul_id
           WHERE c.species_code IN ('POLL')
       ),
-      -- 5. Aggregate by grid cell and grouping fields, evaluating the
+      -- 6. Aggregate by grid cell and grouping fields, evaluating the
       --    confidentiality rules per group instead of filtering on them.
       groups AS (
           SELECT grid_id, year, species_code,

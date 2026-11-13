@@ -121,3 +121,32 @@ test_that("hostile filter values are inert", {
   expect_equal(nrow(res), 0)
   expect_gt(q1(con, "SELECT count(*) FROM data.hauls"), 0)
 })
+
+test_that("small-overlap trimming affects GPS hauls only", {
+  con <- test_con()
+  cfg <- cfg_default()
+  expect_equal(cfg$apportionment$min_share, 0.05)
+  cfg_none <- cfg
+  cfg_none$apportionment$min_share <- 0
+
+  alloc_sql <- function(c) build_sql_internal(dataset_spec("x", "hex_8km"), c, "allocation")
+  trimmed <- DBI::dbGetQuery(con, alloc_sql(cfg))
+  untrimmed <- DBI::dbGetQuery(con, alloc_sql(cfg_none))
+  types <- DBI::dbGetQuery(con, "SELECT haul_id, haul_type FROM data.hauls")
+  area_ids <- types$haul_id[types$haul_type == "AREA"]
+
+  # Area hauls: identical allocation with or without trimming.
+  key <- function(d) paste(d$haul_id, d$grid_id)
+  a1 <- trimmed[trimmed$haul_id %in% area_ids, ]
+  a0 <- untrimmed[untrimmed$haul_id %in% area_ids, ]
+  expect_setequal(key(a1), key(a0))
+  # And on the 8 km grid, every one of their cells is under 5% of the haul.
+  expect_true(all(a0$p < 0.05))
+
+  # GPS hauls: some slivers removed, and every haul keeps at least one cell.
+  g1 <- trimmed[!trimmed$haul_id %in% area_ids, ]
+  g0 <- untrimmed[!untrimmed$haul_id %in% area_ids, ]
+  expect_lt(nrow(g1), nrow(g0))
+  expect_setequal(unique(g1$haul_id), unique(g0$haul_id))
+  expect_lt(max(abs(tapply(trimmed$p, trimmed$haul_id, sum) - 1)), 1e-9)
+})

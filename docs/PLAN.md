@@ -41,7 +41,9 @@ track for GPS-derived hauls, or the whole stat area for `haul_type` = area hauls
 hauls ── haul-level filters
   └─ apportion: haul_polygon ∩ grid cell
        p_raw = area(intersection) / area(haul_polygon)
-       p     = p_raw / sum(p_raw) over haul      -- renormalise (grid edge, fp error)
+       drop overlaps with p_raw < 5% (GPS hauls only; AREA hauls exempt;
+         a haul with no overlap >= 5% keeps all of its overlaps)
+       p     = p_raw / sum(p_raw) over haul      -- renormalise (trimming, grid edge, fp error)
          └─ join haul_catch ── catch-level filters (species_code, species_group_code)
               └─ catch_weight_mt = weight * p, catch_count = count * p
                    └─ GROUP BY grid cell + grouping fields
@@ -53,9 +55,14 @@ hauls ── haul-level filters
   so any grid with an id and polygon column works.
 - Filters: AND across fields; within a field, any of the selected values
   (`IN (...)`); `year` is a range. Empty filter = no restriction.
-- A vessel counts toward every cell its haul polygon overlaps with positive
-  area (including area hauls); cells that merely touch a haul's edge are
-  excluded. This satisfies current policy; a future change (e.g. ignore area
+- A vessel counts toward every cell its haul receives catch in: for GPS hauls,
+  cells covering at least 5% of the haul (`apportionment.min_share` in
+  `schema.yaml`); for area hauls, every overlapping cell.
+- Hauls entirely off the grid lose their catch; this is reported in the
+  suppression report as off-grid catch, separately from confidentiality
+  suppression.
+- Records with a missing species or species group code are never selected by
+  a filter on that field (there is nothing to select on), which is intended. This satisfies current policy; a future change (e.g. ignore area
   hauls when counting) is a one-line rule change because `haul_type` is
   available.
 - The vessel count is used only in `HAVING`; it is never in the output.
@@ -192,7 +199,7 @@ threshold, and a generated hex grid in EPSG:3338.
 
 1. ~~Repo scaffold, Docker/compose, `.env.example`, synthetic PostGIS seed, CI.~~ Done.
 2. ~~Config + spec + SQL builder, with conservation and gate tests.~~ Done.
-3. Execution + suppression stats.
+3. ~~Execution + suppression stats.~~ Done.
 4. SQLite store.
 5. Packager, README, rclone upload — full pipeline usable from the R console.
 6. Shiny UI.

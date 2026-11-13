@@ -13,11 +13,11 @@ Imports:
     digest,
     jsonlite,
     RPostgres,
+    sf,
     shiny,
     utils,
     yaml
 Suggests:
-    sf,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

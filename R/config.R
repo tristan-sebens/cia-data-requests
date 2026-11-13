@@ -19,6 +19,7 @@ load_config <- function(dir = system.file("config", package = "ciarequests"),
     hauls      = read("schema.yaml")$hauls,
     haul_catch = read("schema.yaml")$haul_catch,
     fields     = read("schema.yaml")$fields,
+    apportionment = read("schema.yaml")$apportionment %||% list(min_share = 0),
     grids      = read("grids.yaml"),
     rules      = read("rules.yaml")
   )
@@ -69,6 +70,15 @@ validate_config <- function(cfg) {
     if (!identical(as.integer(def$srid), 3338L)) {
       cfg_error("grids.", g, ".srid must be 3338 (haul polygons are in EPSG:3338)")
     }
+  }
+
+  A <- cfg$apportionment
+  if (!is.numeric(A$min_share %||% 0) || length(A$min_share %||% 0) != 1 ||
+      (A$min_share %||% 0) < 0 || (A$min_share %||% 0) >= 1) {
+    cfg_error("apportionment.min_share must be a number in [0, 1)")
+  }
+  if (length(A$exempt_haul_types) && is.null(cfg$hauls$haul_type)) {
+    cfg_error("apportionment.exempt_haul_types needs hauls.haul_type to be configured")
   }
 
   if (!length(cfg$rules)) cfg_error("at least one confidentiality rule is required")
