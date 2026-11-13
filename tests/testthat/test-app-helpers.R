@@ -74,3 +74,14 @@ test_that("loading the installed package loads sf (needed to handle results from
     "sf" %in% loadedNamespaces()
   }))
 })
+
+test_that("the SQL popup shows both queries, escaped, with copy buttons", {
+  cfg <- cfg_default()
+  spec <- dataset_spec("x", "hex_8km", description = "a <b> & c")
+  html <- as.character(sql_modal("x", list(deliver = build_sql(spec, cfg),
+                                           diagnostic = build_sql(spec, cfg, "diagnostic"))))
+  expect_match(html, 'id="sql_text_deliver"', fixed = TRUE)
+  expect_match(html, 'id="sql_text_diagnostic"', fixed = TRUE)
+  expect_match(html, "a &lt;b&gt; &amp; c", fixed = TRUE)
+  expect_equal(lengths(regmatches(html, gregexpr("navigator.clipboard", html))), 2)
+})
