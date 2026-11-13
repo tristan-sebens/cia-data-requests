@@ -240,7 +240,13 @@ threshold, and a generated hex grid in EPSG:3338.
 4. ~~SQLite store.~~ Done.
 5. ~~Packager, README, rclone upload — full pipeline usable from the R console.~~ Done.
 6. ~~Shiny UI.~~ Done.
-7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
+7. Performance on real data (in progress):
+   - ~~Overlay: compute each haul/cell intersection once (it was computed twice),
+     skip it when a haul lies inside one cell or a cell inside a haul, and
+     compute haul areas once. ~2.5x faster on the synthetic data.~~
+   - ~~Cancel button for running jobs (also cancels the Postgres query).~~
+   - Diagnose slow spatially filtered queries on the real tables (EXPLAIN).
+   - Benchmark on-the-fly overlay vs precomputed allocation tables.
 
 ## Spatial filters
 

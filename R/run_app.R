@@ -360,5 +360,5 @@ app_server <- function(input, output, session, cfg) {
 
   datasets_server(input, output, session, cfg, store, db, state, datasets, approvals, refresh, guarded)
   runs_server(input, output, session, cfg, store, state, datasets, approvals, runs, refresh, guarded,
-              job_running)
+              job_running, db)
 }

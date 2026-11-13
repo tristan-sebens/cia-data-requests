@@ -28,6 +28,7 @@
       hauls_f AS (
           SELECT h.haul_id,
                  h.haul_polygon,
+                 ST_Area(h.haul_polygon) AS haul_area,
                  h.vessel_id,
                  h.year,
                  h.management_program_code,
@@ -37,15 +38,23 @@
             AND h.year BETWEEN 2019 AND 2023
       ),
       -- 2. Overlay the grid: share of each haul's area falling in each cell.
-      --    Zero-area overlaps (cells merely touching a haul's edge) are dropped.
+      --    The intersection is computed only where a cell cuts through a haul:
+      --    a haul inside one cell has share 1, and a cell inside a haul (common
+      --    for area hauls) contributes the cell's area. Zero-area overlaps (cells
+      --    merely touching a haul's edge) are dropped.
       overlay AS (
           SELECT * FROM (
               SELECT f.haul_id,
                      f.haul_type,
                      g.hexid AS grid_id,
-                     ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
+                     CASE WHEN ST_CoveredBy(f.haul_polygon, g.shape) THEN 1.0
+                          WHEN ST_CoveredBy(g.shape, f.haul_polygon) THEN ST_Area(g.shape) / f.haul_area
+                          ELSE ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / f.haul_area
+                     END AS p_raw
               FROM hauls_f f
               JOIN data.hex_8km g ON ST_Intersects(f.haul_polygon, g.shape)
+              OFFSET 0  -- computes p_raw once per pair (keeps the WHERE below from being
+                        -- merged into this query, which would compute it twice)
           ) o
           WHERE p_raw > 0
       ),
@@ -130,21 +139,30 @@
       hauls_f AS (
           SELECT h.haul_id,
                  h.haul_polygon,
+                 ST_Area(h.haul_polygon) AS haul_area,
                  h.vessel_id,
                  h.year,
                  h.haul_type
           FROM data.hauls h
       ),
       -- 2. Overlay the grid: share of each haul's area falling in each cell.
-      --    Zero-area overlaps (cells merely touching a haul's edge) are dropped.
+      --    The intersection is computed only where a cell cuts through a haul:
+      --    a haul inside one cell has share 1, and a cell inside a haul (common
+      --    for area hauls) contributes the cell's area. Zero-area overlaps (cells
+      --    merely touching a haul's edge) are dropped.
       overlay AS (
           SELECT * FROM (
               SELECT f.haul_id,
                      f.haul_type,
                      g.hexid AS grid_id,
-                     ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / ST_Area(f.haul_polygon) AS p_raw
+                     CASE WHEN ST_CoveredBy(f.haul_polygon, g.shape) THEN 1.0
+                          WHEN ST_CoveredBy(g.shape, f.haul_polygon) THEN ST_Area(g.shape) / f.haul_area
+                          ELSE ST_Area(ST_Intersection(f.haul_polygon, g.shape)) / f.haul_area
+                     END AS p_raw
               FROM hauls_f f
               JOIN data.hex_20km g ON ST_Intersects(f.haul_polygon, g.shape)
+              OFFSET 0  -- computes p_raw once per pair (keeps the WHERE below from being
+                        -- merged into this query, which would compute it twice)
           ) o
           WHERE p_raw > 0
       ),

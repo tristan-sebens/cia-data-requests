@@ -90,7 +90,8 @@ sql_parts <- function(spec, cfg) {
     "\n",
     "hauls_f AS (\n",
     "    SELECT ", col_as("h", H$key, "haul_id"),
-    if (!use_alloc_table) paste0(",\n           ", col_as("h", H$geom, "haul_polygon")),
+    if (!use_alloc_table) paste0(",\n           ", col_as("h", H$geom, "haul_polygon"),
+                                 ",\n           ST_Area(h.", H$geom, ") AS haul_area"),
     paste(prefix(",\n           h.", haul_cols), collapse = ""), "\n",
     "    FROM ", hauls_tbl, " h",
     sql_where(haul_filters, cfg, "h",
@@ -112,17 +113,26 @@ sql_parts <- function(spec, cfg) {
     )
     alloc_ctes <- alloc
   } else {
+    g <- function(x) paste0("g.", grid$geom)
     overlay <- paste0(
       "-- 2. Overlay the grid: share of each haul's area falling in each cell.\n",
-      "--    Zero-area overlaps (cells merely touching a haul's edge) are dropped.\n",
+      "--    The intersection is computed only where a cell cuts through a haul:\n",
+      "--    a haul inside one cell has share 1, and a cell inside a haul (common\n",
+      "--    for area hauls) contributes the cell's area. Zero-area overlaps (cells\n",
+      "--    merely touching a haul's edge) are dropped.\n",
       "overlay AS (\n",
       "    SELECT * FROM (\n",
       "        SELECT f.haul_id,\n",
       if (length(trim_cols)) paste0("               f.", trim_cols, ",\n"),
       "               g.", grid$id, " AS grid_id,\n",
-      "               ST_Area(ST_Intersection(f.haul_polygon, g.", grid$geom, ")) / ST_Area(f.haul_polygon) AS p_raw\n",
+      "               CASE WHEN ST_CoveredBy(f.haul_polygon, ", g(), ") THEN 1.0\n",
+      "                    WHEN ST_CoveredBy(", g(), ", f.haul_polygon) THEN ST_Area(", g(), ") / f.haul_area\n",
+      "                    ELSE ST_Area(ST_Intersection(f.haul_polygon, ", g(), ")) / f.haul_area\n",
+      "               END AS p_raw\n",
       "        FROM hauls_f f\n",
-      "        JOIN ", grid_tbl, " g ON ST_Intersects(f.haul_polygon, g.", grid$geom, ")\n",
+      "        JOIN ", grid_tbl, " g ON ST_Intersects(f.haul_polygon, ", g(), ")\n",
+      "        OFFSET 0  -- computes p_raw once per pair (keeps the WHERE below from being\n",
+      "                  -- merged into this query, which would compute it twice)\n",
       "    ) o\n",
       "    WHERE p_raw > 0\n",
       ")"

@@ -2,7 +2,7 @@
 
 #' @noRd
 runs_server <- function(input, output, session, cfg, store, state, datasets, approvals, runs,
-                        refresh, guarded, job_running) {
+                        refresh, guarded, job_running, db) {
 
   # Background job polling ----------------------------------------------------
   start <- function(kind, id) guarded(paste("Start", kind, "job for", id), {
@@ -20,6 +20,14 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
     shiny::invalidateLater(1000)
     p <- poll_job(job)
     state$job_log <- p$log
+    if (!p$done && !is.null(job$cancelled_at) &&
+        difftime(Sys.time(), job$cancelled_at, units = "secs") > 30) {
+      # The job did not stop on its own (e.g. stuck outside a query): kill it.
+      log_warn(job$kind, " job for ", job$id, " did not stop within 30 s of cancelling; killing it")
+      job$proc$kill()
+      if (job$kind != "upload") recover_interrupted_runs(store, job$id, "Cancelled by user.")
+      p <- list(done = TRUE, log = p$log, error = "Cancelled by user.")
+    }
     if (!p$done) return()
     state$job <- NULL
     if (!is.null(p$error)) log_error(job$kind, " job for ", job$id, " failed: ", p$error)
@@ -51,11 +59,22 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
     kind <- job$kind
     bslib::card(
       class = "border-info",
-      bslib::card_header(htmltools::span(class = "spinner-border spinner-border-sm me-2"),
-                         tools::toTitleCase(kind), " running ..."),
+      bslib::card_header(
+        class = "d-flex align-items-center",
+        htmltools::span(class = "spinner-border spinner-border-sm me-2"),
+        if (is.null(job$cancelled_at)) paste(tools::toTitleCase(kind), "running ...")
+        else paste("Cancelling", kind, "..."),
+        if (kind != "upload" && is.null(job$cancelled_at))
+          shiny::actionButton("job_cancel", "Cancel", class = "btn-sm btn-outline-danger ms-auto")
+      ),
       htmltools::tags$pre(class = "job-log mb-0", paste(log, collapse = "\n"))
     )
   }
+
+  shiny::observeEvent(input$job_cancel, guarded("Cancel running job", {
+    shiny::req(state$job)
+    state$job <- cancel_job(state$job, db())
+  }))
 
   output$job_box_preview <- shiny::renderUI(job_box("preview"))
   output$job_box_package <- shiny::renderUI(job_box(c("package", "upload")))

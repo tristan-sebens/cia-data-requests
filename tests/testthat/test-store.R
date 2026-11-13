@@ -243,3 +243,70 @@ test_that("preview_request records a query error against the dataset", {
   expect_equal(p$status, "failed")
   expect_match(get_run_datasets(store, p$run_id)$error, "no_such_grid")
 })
+
+test_that("a cancelled job stops before running anything and its run is marked failed", {
+  con <- test_con()
+  cfg <- cfg_default()
+  store <- store_connect(withr::local_tempfile(fileext = ".sqlite"))
+  withr::defer(DBI::dbDisconnect(store))
+  withr::local_envvar(CIA_REQUESTS_DB = DBI::dbGetInfo(store)$dbname, CIA_LOG_LEVEL = "OFF")
+  req <- create_request(store, "t", "Org", drive_path = "f")
+  add_dataset(store, req, example_specs()[[2]], cfg)
+
+  log_file <- withr::local_tempfile(fileext = ".log")
+  file.create(job_cancel_file(log_file))
+  ns <- asNamespace("ciarequests")
+  expect_error(job_body(ns, "preview", req, function(...) NULL, log_file), "Cancelled by user")
+  expect_true(file.exists(job_pgpid_file(log_file)))
+
+  # Cancelling mid-preview: the progress check fails the run cleanly.
+  unlink(job_cancel_file(log_file))
+  n <- 0
+  res <- tryCatch(preview_request(store, con, req, cfg, progress = function(...) {
+    n <<- n + 1
+    file.create(job_cancel_file(log_file))
+    if (file.exists(job_cancel_file(log_file))) stop("Cancelled by user.", call. = FALSE)
+  }), error = identity)
+  expect_match(conditionMessage(res), "Cancelled by user")
+  runs <- list_runs(store, req)
+  expect_equal(runs$status[1], "failed")
+  expect_match(get_run(store, runs$id[1])$error, "Cancelled by user")
+
+  # recover_interrupted_runs can be limited to one request.
+  other <- create_request(store, "u", "Org", drive_path = "g")
+  r1 <- start_run(store, req, "preview")
+  r2 <- start_run(store, other, "preview")
+  recover_interrupted_runs(store, req, "Cancelled by user.")
+  expect_equal(get_run(store, r1)$status, "failed")
+  expect_equal(get_run(store, r2)$status, "running")
+})
+
+test_that("cancel_job cancels the job's running Postgres query", {
+  con <- test_con()
+  # A slow query in another process, standing in for a job's dataset query.
+  busy <- callr::r_bg(function() {
+    con <- DBI::dbConnect(RPostgres::Postgres(), host = Sys.getenv("CIA_PG_HOST"),
+                          dbname = Sys.getenv("CIA_PG_DB"), user = Sys.getenv("CIA_PG_USER"),
+                          password = Sys.getenv("CIA_PG_PASSWORD"), application_name = "cancel_test")
+    tryCatch({ DBI::dbGetQuery(con, "SELECT pg_sleep(60)"); "finished" },
+             error = function(e) conditionMessage(e))
+  })
+  withr::defer(busy$kill())
+  pid <- NA
+  for (i in 1:50) {
+    pid <- DBI::dbGetQuery(con, "SELECT pid FROM pg_stat_activity
+                                 WHERE application_name = 'cancel_test' AND state = 'active'")$pid[1]
+    if (!is.na(pid)) break
+    Sys.sleep(0.2)
+  }
+  expect_false(is.na(pid))
+  log_file <- withr::local_tempfile(fileext = ".log")
+  writeLines(as.character(pid), job_pgpid_file(log_file))
+  withr::local_envvar(CIA_LOG_LEVEL = "OFF")
+  job <- cancel_job(list(kind = "preview", id = 1, log_file = log_file), con)
+  expect_false(is.null(job$cancelled_at))
+  expect_true(file.exists(job_cancel_file(log_file)))
+  busy$wait(10000)
+  expect_false(busy$is_alive())
+  expect_match(busy$get_result(), "cancel")
+})

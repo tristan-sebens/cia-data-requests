@@ -136,11 +136,16 @@ store_migrate <- function(store) {
 #' (app stopped, machine shut down). Do not call while a run may be in progress.
 #' @return Number of runs marked failed.
 #' @export
-recover_interrupted_runs <- function(store) {
-  DBI::dbExecute(store, "
-    UPDATE runs SET status = 'failed', finished_at = ?,
-                    error = 'Interrupted: the app stopped while this run was in progress.'
-    WHERE status = 'running'", params = list(now_utc()))
+recover_interrupted_runs <- function(store, request_id = NULL,
+                                     reason = "Interrupted: the app stopped while this run was in progress.") {
+  if (is.null(request_id)) {
+    DBI::dbExecute(store, "UPDATE runs SET status = 'failed', finished_at = ?, error = ?
+                           WHERE status = 'running'", params = list(now_utc(), reason))
+  } else {
+    DBI::dbExecute(store, "UPDATE runs SET status = 'failed', finished_at = ?, error = ?
+                           WHERE status = 'running' AND request_id = ?",
+                   params = list(now_utc(), reason, request_id))
+  }
 }
 
 # ---------------------------------------------------------------------------
