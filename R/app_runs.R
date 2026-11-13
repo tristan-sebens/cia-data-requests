@@ -98,7 +98,7 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
         r <- pv$results[[i]]
         k <- i
         if (inherits(r, "cia_dataset_result")) {
-          output[[paste0("pv_map_", k)]] <- leaflet::renderLeaflet(dataset_map(r$data))
+          output[[paste0("pv_map_", k)]] <- leaflet::renderLeaflet(dataset_map(r$data, r$areas))
           output[[paste0("pv_table_", k)]] <- shiny::renderTable({
             utils::head(sf::st_drop_geometry(r$data), 500)
           }, digits = 3, striped = TRUE, spacing = "xs")

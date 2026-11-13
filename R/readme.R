@@ -20,9 +20,7 @@ render_readme <- function(request, entries, gpkg_file, cfg, prepared = Sys.time(
     s <- e$stats
     spec <- e$spec
     grid <- cfg$grids[[spec$grid]]
-    filters <- if (length(spec$filters)) {
-      vapply(names(spec$filters), function(f) describe_filter(f, spec$filters[[f]]), "")
-    } else "none (all records)"
+    filters <- spec_filter_lines(spec, cfg)
 
     suppression <- c(
       sprintf("- Records withheld: %s of %s (%s)",
@@ -60,6 +58,7 @@ render_readme <- function(request, entries, gpkg_file, cfg, prepared = Sys.time(
   }
 
   sql_files <- vapply(entries, `[[`, "", "sql_file")
+  any_spatial <- any(vapply(entries, function(e) length(e$spec$spatial_filters) > 0, TRUE))
   layers <- vapply(entries, function(e) e$spec$name, "")
   c(
     paste0("# ", md_text(request$title)),
@@ -88,6 +87,11 @@ render_readme <- function(request, entries, gpkg_file, cfg, prepared = Sys.time(
     "",
     sub("^Method: e", "E", paste(method_lines(cfg, audience = "recipient"), collapse = " ")),
     "",
+    if (any_spatial) c(paste(
+      "Spatial filters select whole hauls: a haul is included (or excluded) if its footprint",
+      "overlaps one of the listed areas, not merely touching its boundary. All of an included",
+      "haul's catch is then apportioned as above, so cells just outside an area's boundary",
+      "can receive catch from hauls that crossed it."), ""),
     "Coordinate reference system: EPSG:3338 (NAD83 / Alaska Albers).",
     "",
     "## Confidentiality",
@@ -99,6 +103,19 @@ render_readme <- function(request, entries, gpkg_file, cfg, prepared = Sys.time(
     "Withheld records are removed, not set to zero; their cells do not appear in the layer.",
     ""
   ) |> paste(collapse = "\n")
+}
+
+#' Every filter of a dataset (attribute and spatial) as Markdown lines
+#' @noRd
+spec_filter_lines <- function(spec, cfg) {
+  out <- c(
+    vapply(names(spec$filters), function(f) describe_filter(f, spec$filters[[f]]), ""),
+    vapply(spec$spatial_filters, function(s) {
+      paste0(if (s$mode == "include") "Only hauls" else "Excluding hauls", " overlapping ",
+             area_source_label(s$source, cfg), " ", paste(s$codes, collapse = ", "))
+    }, "")
+  )
+  if (length(out)) unname(out) else "none (all records)"
 }
 
 #' @noRd

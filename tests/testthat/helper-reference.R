@@ -45,6 +45,20 @@ ref_apply_filters <- function(df, filters, fields) {
   df
 }
 
+# Spatial filters: keep (include) or drop (exclude) hauls whose interior
+# intersects the interior of any chosen area (DE-9IM "T********"), i.e. a
+# shared area, not just a shared boundary.
+ref_spatial_filter <- function(con, hauls, spatial_filters) {
+  for (s in spatial_filters) {
+    areas <- sf::st_read(con, quiet = TRUE, query = sprintf(
+      "SELECT shape FROM data.spatial_areas WHERE source = '%s' AND area_code::text IN (%s)",
+      s$source, paste0("'", s$codes, "'", collapse = ", ")))
+    hit <- lengths(sf::st_relate(hauls, areas, pattern = "T********")) > 0
+    hauls <- hauls[if (s$mode == "include") hit else !hit, ]
+  }
+  hauls
+}
+
 # Grouping key that keeps NA as its own group (like SQL GROUP BY).
 ref_key <- function(df, cols) {
   parts <- lapply(cols, function(c) {
@@ -61,6 +75,7 @@ ref_aggregate <- function(con, spec, cfg, gated = TRUE, min_vessels = 3) {
   grid <- cfg$grids[[spec$grid]]
 
   hauls <- ref_apply_filters(ref_hauls(con), spec$filters, cfg$fields)
+  hauls <- ref_spatial_filter(con, hauls, spec$spatial_filters)
   cells <- ref_grid(con, grid)
 
   hauls$haul_area <- as.numeric(sf::st_area(hauls))

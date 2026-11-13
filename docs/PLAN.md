@@ -242,26 +242,35 @@ threshold, and a generated hex grid in EPSG:3338.
 6. ~~Shiny UI.~~ Done.
 7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
 
-## Spatial filters (next)
+## Spatial filters
 
 Requests often limit a dataset to (or, rarely, exclude) one or more
-management areas. Design:
+management areas.
 
-- **Area layers** are registered in `inst/config/areas.yaml`, like grids: a
-  table with an id column and a polygon column in EPSG:3338 (optionally a
-  label column), e.g. NMFS reporting areas, ADF&G groundfish and salmon
-  statistical areas, FMP areas (WGOA, EGOA, AI, EBS, NBS, ...).
-- **Spec:** a dataset has a list of spatial filters, each
-  `{mode: include | exclude, source: {layer: <area layer>, ids: [...]}}`.
-  Within a filter the areas are combined (any of them); separate filters are
-  combined with AND, like attribute filters.
+- **One areas view** (`data.spatial_areas`, a dbt model maintained outside
+  this repo) unions every area source: `source`, `area_code`, `shape`
+  (EPSG:3338). Business rules live in the view (e.g. only current ADF&G stat
+  area definitions). The app reads only those three columns, configured in
+  `inst/config/areas.yaml`, which also gives display names and order; sources
+  added to the view appear in the app without code changes.
+- **Spec:** `spatial_filters`, a list of
+  `{mode: include | exclude, source: <source>, codes: [...]}`. Within a filter
+  the areas are combined (any of them); separate filters are combined with
+  AND, like attribute filters. Datasets reference `(source, code)`, never the
+  view's generated `area_id`. Specs without spatial filters keep their
+  previous JSON and SQL, so existing approvals stay valid.
 - **Applied up front**, in `hauls_f`, before apportionment: include keeps
-  hauls that overlap the areas; exclude drops them. "Overlap" means a shared
-  area greater than zero, so hauls that only touch a boundary (e.g.
-  statistical-area hauls next to the area) do not count.
-- The SQL file stays self-contained and readable: it names the area table
-  and ids. Unknown area ids fail the preview, like unknown codes.
-- README and preview describe the filter; the preview map outlines the areas.
+  hauls that overlap the areas; exclude drops them. Overlap means a shared
+  area greater than zero (`ST_Intersects AND NOT ST_Touches`), so hauls that
+  only touch a boundary do not count. Hauls are kept or dropped whole (fuzzy
+  edges at grid resolution are accepted).
+- Each check is written `(EXISTS (...)) IS TRUE`: PostgreSQL badly
+  underestimates spatial semi-joins (2 of 2,250 hauls in testing), and the bad
+  estimate turned the rest of the plan into nested loops (6 s instead of 2 s).
+  Evaluated per haul, each check still uses the area table's spatial index.
+- Unknown area codes fail the preview, like unknown attribute codes. The
+  README and SQL header describe the filter; the preview map outlines the
+  areas (included blue, excluded red).
 
 **Later: custom areas (WKT).** A polygon drawn for a specific request
 (exported from ArcMap etc. as WKT). It is defined **once per request** and

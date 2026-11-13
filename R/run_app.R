@@ -8,7 +8,7 @@ run_app <- function(host = "127.0.0.1", port = 3838) {
   cfg <- load_config()
   log_info("Config: grids ", paste(names(cfg$grids), collapse = ", "), "; rules ",
            paste(vapply(cfg$rules, function(r) r$name %||% r$type, ""), collapse = ", "))
-  startup_checks()
+  startup_checks(cfg)
   app <- shiny::shinyApp(app_ui(cfg), function(input, output, session) app_server(input, output, session, cfg))
   log_info("Open http://127.0.0.1:", port, " in a browser")
   shiny::runApp(app, host = host, port = port, launch.browser = FALSE)
@@ -19,7 +19,7 @@ run_app <- function(host = "127.0.0.1", port = 3838) {
 #' Only a broken request store stops the app; the database and rclone checks
 #' just warn, so the app can still be used to edit requests.
 #' @noRd
-startup_checks <- function() {
+startup_checks <- function(cfg) {
   path <- Sys.getenv("CIA_REQUESTS_DB")
   log_info("Request store: ", path)
   store <- store_connect()
@@ -43,10 +43,40 @@ startup_checks <- function() {
     con <- cia_connect()
     on.exit(DBI::dbDisconnect(con), add = TRUE)
     log_timed("Postgres check query", level = "INFO", DBI::dbGetQuery(con, "SELECT 1"))
+    if (!is.null(cfg$areas)) check_areas_view(con, cfg)
   }, error = function(e) {
     log_warn("Postgres is not reachable: ", trimws(conditionMessage(e)),
              ". The app will start, but previews and packaging will fail.")
   })
+}
+
+#' Check the spatial filter areas view and log what it contains
+#'
+#' Warns (does not fail) if it is missing or not in EPSG:3338.
+#' @noRd
+check_areas_view <- function(con, cfg) {
+  V <- cfg$areas$view
+  tbl <- paste0(V$schema, ".", V$table)
+  x <- tryCatch(
+    log_timed(paste0("Spatial filter areas check (", tbl, ")"), level = "INFO", slow_ms = 10000,
+      DBI::dbGetQuery(con, paste0(
+        "SELECT ", V$source, " AS source, count(*)::int AS n, ",
+        "array_to_string(array_agg(DISTINCT ST_SRID(", V$geom, ")), ',') AS srids, ",
+        "array_to_string(array_agg(DISTINCT GeometryType(", V$geom, ")), ',') AS types ",
+        "FROM ", tbl, " GROUP BY 1 ORDER BY 1"))),
+    error = function(e) {
+      log_warn("Spatial filter areas unavailable (", tbl, "): ", trimws(conditionMessage(e)),
+               ". Spatial filters cannot be used until it exists.")
+      NULL
+    })
+  if (is.null(x)) return(invisible(FALSE))
+  for (i in seq_len(nrow(x))) {
+    log_info("  ", x$source[i], ": ", x$n[i], " areas (", x$types[i], ")")
+    if (!identical(x$srids[i], "3338")) {
+      log_warn("  ", x$source[i], " has SRID ", x$srids[i], "; spatial filters need EPSG:3338.")
+    }
+  }
+  invisible(TRUE)
 }
 
 #' Filter values per field, cached for the life of the app process
@@ -63,6 +93,13 @@ filter_choices <- function(con, cfg) {
   .cia_cache$choices
 }
 .cia_cache <- new.env(parent = emptyenv())
+
+#' Spatial filter areas (source, code), cached like [filter_choices()]
+#' @noRd
+area_choices <- function(con, cfg) {
+  if (is.null(.cia_cache$areas)) .cia_cache$areas <- area_values(con, cfg)
+  .cia_cache$areas
+}
 
 #' @noRd
 app_ui <- function(cfg) {

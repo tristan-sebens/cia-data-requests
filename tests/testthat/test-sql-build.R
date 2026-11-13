@@ -83,7 +83,6 @@ test_that("rules with a filter generate FILTER clauses", {
 
 test_that("generated SQL is stable (snapshot)", {
   cfg <- cfg_default()
-  hide_version <- function(x) sub("ciarequests [0-9.]+", "ciarequests <version>", x)
   expect_snapshot(cat(build_sql(example_specs()[[3]], cfg)), transform = hide_version)
   expect_snapshot(cat(build_sql(example_specs()[[2]], cfg, mode = "diagnostic")),
                   transform = hide_version)

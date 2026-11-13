@@ -18,10 +18,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     rows <- lapply(seq_len(nrow(d)), function(i) {
       spec <- d$spec[[i]]
       grid <- cfg$grids[[spec$grid]]$label %||% spec$grid
-      filters <- if (length(spec$filters)) {
-        paste(vapply(names(spec$filters), function(f) describe_filter(f, spec$filters[[f]]), ""),
-              collapse = "; ")
-      } else "none"
+      filters <- paste(spec_filter_lines(spec, cfg), collapse = "; ")
       htmltools::tags$tr(
         htmltools::tags$td(i),
         htmltools::tags$td(htmltools::tags$code(spec$name),
@@ -59,13 +56,87 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
 
   # Values for the filter pickers: loaded from the database on first use, then
   # cached for the life of the app process (see filter_choices()).
+  # Spatial filter rows: keys of the rows currently in the editor, the area
+  # codes per source, and one observer per row that reloads the area picker
+  # when its source changes.
+  sf_keys <- shiny::reactiveVal(integer())
+  sf_next <- 0L
+  sf_observers <- list()
+  sf_areas <- NULL
+
+  sf_codes <- function(source) sf_areas$code[sf_areas$source == source]
+
+  sf_add_row <- function(s = NULL) {
+    sf_next <<- sf_next + 1L
+    k <- sf_next
+    initial <- s$codes
+    first_load <- TRUE
+    codes_id <- paste0("ed_sf_", k, "_codes")
+    sf_observers[[as.character(k)]] <<- shiny::observeEvent(input[[paste0("ed_sf_", k, "_source")]], {
+      src <- input[[paste0("ed_sf_", k, "_source")]]
+      codes <- sf_codes(src)
+      if (!first_load) {
+        # New source: swap in a fresh picker (see spatial_codes_ui()).
+        # Sent immediately, so the browser has the new picker before the update below.
+        shiny::removeUI(paste0("#", codes_id, "_wrap"), immediate = TRUE)
+        shiny::insertUI(paste0("#ed_sf_row_", k), "beforeEnd", spatial_codes_ui(k), immediate = TRUE)
+      }
+      shiny::updateSelectizeInput(
+        session, codes_id, choices = codes, selected = initial, server = TRUE,
+        options = list(placeholder = sprintf("Click to choose from %s area%s, or type to search",
+                                             fmt_n(length(codes)), if (length(codes) == 1) "" else "s"),
+                       maxOptions = 500, plugins = list("remove_button")))
+      initial <<- character()  # keep the saved selection only on first load
+      first_load <<- FALSE
+    })
+    sf_keys(c(sf_keys(), k))
+    spatial_filter_row_ui(k, s, order_area_sources(unique(sf_areas$source), cfg), cfg)
+  }
+
+  sf_reset <- function() {
+    for (o in sf_observers) o$destroy()
+    sf_observers <<- list()
+    sf_keys(integer())
+  }
+
   open_editor <- function(spec, dataset_id = NULL, title) {
     choices <- tryCatch(filter_choices(db(), cfg), error = function(e) {
       stop("Could not load filter values from the database: ", conditionMessage(e), call. = FALSE)
     })
+    sf_reset()
+    sf_rows <- NULL
+    sf_ok <- !is.null(cfg$areas)
+    if (sf_ok) {
+      sf_areas <<- tryCatch(area_choices(db(), cfg), error = function(e) {
+        log_warn("Spatial filter areas unavailable: ", conditionMessage(e))
+        e
+      })
+      if (inherits(sf_areas, "error")) {
+        msg <- paste0("Spatial filter areas could not be loaded from ", cfg$areas$view$schema, ".",
+                      cfg$areas$view$table, ": ", conditionMessage(sf_areas))
+        if (length(spec$spatial_filters)) stop(msg, call. = FALSE)
+        sf_ok <- FALSE
+        sf_rows <- htmltools::div(class = "alert alert-warning small", msg)
+      } else {
+        sf_rows <- lapply(spec$spatial_filters, sf_add_row)
+      }
+    }
     state$editing <- list(dataset_id = dataset_id)
-    shiny::showModal(dataset_editor_modal(spec, cfg, choices, title))
+    shiny::showModal(dataset_editor_modal(spec, cfg, choices, title, sf_rows = sf_rows, sf_available = sf_ok))
   }
+
+  shiny::observeEvent(input$ed_sf_add, guarded("Add spatial filter row", {
+    shiny::insertUI("#ed_sf_rows", "beforeEnd", sf_add_row())
+  }))
+
+  shiny::observeEvent(input$ed_sf_remove, guarded("Remove spatial filter row", {
+    k <- input$ed_sf_remove
+    shiny::removeUI(paste0("#ed_sf_row_", k))
+    o <- sf_observers[[as.character(k)]]
+    if (!is.null(o)) o$destroy()
+    sf_observers[[as.character(k)]] <<- NULL
+    sf_keys(setdiff(sf_keys(), k))
+  }))
 
   shiny::observeEvent(input$ds_add, guarded("Open dataset editor (new)", {
     n <- nrow(datasets())
@@ -123,7 +194,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
   shiny::observeEvent(input$ed_save, guarded("Save dataset", {
     id <- state$editing$dataset_id
     res <- tryCatch({
-      spec <- spec_from_editor(function(n) input[[paste0("ed_", n)]], cfg)
+      spec <- spec_from_editor(function(n) input[[paste0("ed_", n)]], cfg, sf_keys = sf_keys())
       log_debug("Dataset spec from editor: ", spec_to_json(spec))
       if (is.null(id)) {
         add_dataset(store, state$request_id, spec, cfg)
@@ -143,6 +214,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     log_info(res, if (is.null(id)) "" else paste0(" (dataset ", id, ")"))
     editor_error(NULL)
     state$editing <- NULL
+    sf_reset()
     shiny::removeModal()
     shiny::showNotification(res, type = "message")
     refresh()

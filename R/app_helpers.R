@@ -6,7 +6,7 @@
 #' @param get Function returning the value of an editor input by short name
 #'   (e.g. `get("name")`, `get("f_species_code")`).
 #' @noRd
-spec_from_editor <- function(get, cfg) {
+spec_from_editor <- function(get, cfg, sf_keys = integer()) {
   filters <- list()
   for (f in names(cfg$fields)) {
     if (cfg$fields[[f]]$kind == "set") {
@@ -20,12 +20,62 @@ spec_from_editor <- function(get, cfg) {
       if (!is.null(lo) || !is.null(hi)) filters[[f]] <- list(min = lo, max = hi)
     }
   }
+  spatial <- lapply(sf_keys, function(k) {
+    list(mode = get(paste0("sf_", k, "_mode")) %||% "include",
+         source = get(paste0("sf_", k, "_source")) %||% "",
+         codes = as.character(get(paste0("sf_", k, "_codes")) %||% character()))
+  })
   dataset_spec(
     name        = trimws(get("name") %||% ""),
     grid        = get("grid") %||% "",
     filters     = filters,
     group_by    = as.character(get("group_by") %||% character()),
-    description = trimws(get("description") %||% "")
+    description = trimws(get("description") %||% ""),
+    spatial_filters = spatial
+  )
+}
+
+#' One spatial filter row in the dataset editor
+#'
+#' The area picker starts empty; the server fills it (server-side selectize,
+#' since a source such as a fine hex grid can have tens of thousands of areas).
+#' @param k Row key, unique within the session.
+#' @param s The filter (`mode`, `source`, `codes`), or `NULL` for a new row.
+#' @param sources Area sources, in display order.
+#' @noRd
+spatial_filter_row_ui <- function(k, s, sources, cfg, ns = identity) {
+  id <- function(x) ns(paste0("ed_sf_", k, "_", x))
+  source_choices <- stats::setNames(sources, vapply(sources, area_source_label, "", cfg = cfg))
+  htmltools::div(
+    id = ns(paste0("ed_sf_row_", k)), class = "border rounded p-2 pb-0 mb-2",
+    htmltools::div(
+      class = "d-flex gap-2 align-items-start",
+      htmltools::div(style = "flex: 1 1 45%;",
+        shiny::selectInput(id("mode"), NULL, width = "100%", selected = s$mode %||% "include",
+                           choices = c("Only hauls overlapping" = "include",
+                                       "Excluding hauls overlapping" = "exclude"))),
+      htmltools::div(style = "flex: 1 1 45%;",
+        shiny::selectInput(id("source"), NULL, source_choices, width = "100%",
+                           selected = s$source %||% sources[1])),
+      htmltools::tags$button(
+        type = "button", class = "btn btn-sm btn-outline-danger mt-1", title = "Remove this spatial filter",
+        onclick = sprintf("Shiny.setInputValue('%s', %d, {priority: 'event'})", ns("ed_sf_remove"), k),
+        "Remove")
+    ),
+    spatial_codes_ui(k, ns)
+  )
+}
+
+#' The area picker of a spatial filter row (empty; filled by the server)
+#'
+#' Replaced, not updated, when the row's source changes: selectize re-applies
+#' its plugins on every update, which would duplicate the remove buttons.
+#' @noRd
+spatial_codes_ui <- function(k, ns = identity) {
+  htmltools::div(
+    id = ns(paste0("ed_sf_", k, "_codes_wrap")), class = "cia-picker",
+    shiny::selectizeInput(ns(paste0("ed_sf_", k, "_codes")), NULL, choices = NULL, multiple = TRUE,
+                          width = "100%", options = list(placeholder = "Loading areas ..."))
   )
 }
 
@@ -34,8 +84,12 @@ spec_from_editor <- function(get, cfg) {
 #' @param spec Spec to edit (or a blank one).
 #' @param choices Named list of available values per set field, plus
 #'   `c(min, max)` for range fields.
+#' @param sf_rows Spatial filter section content: rows from
+#'   `spatial_filter_row_ui()`, or a message if areas are unavailable.
+#' @param sf_available Whether spatial filters can be added.
 #' @noRd
-dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
+dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity, sf_rows = NULL,
+                                 sf_available = !is.null(cfg$areas)) {
   grid_choices <- stats::setNames(names(cfg$grids),
                                   vapply(names(cfg$grids), function(g) cfg$grids[[g]]$label %||% g, ""))
   field_inputs <- lapply(names(cfg$fields), function(f) {
@@ -94,7 +148,16 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
         htmltools::tags$h6("Filters"),
         htmltools::tags$small(class = "text-muted d-block mb-2",
                               "Leave a field empty for no restriction. Values within a field are combined with OR, fields with AND."),
-        field_inputs
+        field_inputs,
+        if (!is.null(cfg$areas)) htmltools::tagList(
+          htmltools::tags$h6(class = "mt-3", "Spatial filters"),
+          htmltools::tags$small(class = "text-muted d-block mb-2",
+            "Keep or drop whole hauls whose footprint overlaps any of the chosen areas ",
+            "(touching a boundary does not count). Several spatial filters are combined with AND."),
+          htmltools::div(id = ns("ed_sf_rows"), sf_rows),
+          if (sf_available) shiny::actionButton(ns("ed_sf_add"), "Add spatial filter",
+                                                class = "btn-sm btn-outline-primary mb-2")
+        )
       )
     ),
     shiny::uiOutput(ns("ed_error")),
@@ -149,29 +212,50 @@ stats_notes <- function(s) {
 }
 
 #' Leaflet map of a dataset's delivered cells, shaded by catch weight
+#'
+#' @param areas Optional outlines of the dataset's spatial filter areas (from
+#'   `area_outlines()`): included areas in blue, excluded in red, dashed.
 #' @noRd
-dataset_map <- function(data) {
+dataset_map <- function(data, areas = NULL) {
+  has_areas <- !is.null(areas) && nrow(areas) > 0
+  if (has_areas) areas <- sf::st_shift_longitude(areas)
   m <- leaflet::leaflet(options = leaflet::leafletOptions(worldCopyJump = FALSE)) |>
     leaflet::addTiles()
-  if (!nrow(data)) {
-    return(leaflet::setView(m, lng = -160, lat = 58, zoom = 3))
+
+  if (nrow(data)) {
+    # Aggregate over the grouping fields so each cell is drawn once.
+    totals <- tapply(data$catch_weight_mt, data$grid_id, sum)
+    cells <- data[!duplicated(data$grid_id), "grid_id"]
+    cells$catch_weight_mt <- as.numeric(totals[as.character(cells$grid_id)])
+    cells <- sf::st_shift_longitude(sf::st_transform(cells, 4326))  # keep the Aleutians together
+    pal <- leaflet::colorNumeric("viridis", domain = sqrt(cells$catch_weight_mt))
+    m <- leaflet::addLegend(m, "bottomright", pal = pal, values = sqrt(cells$catch_weight_mt),
+                            title = "Catch (t)", opacity = 0.8,
+                            labFormat = leaflet::labelFormat(transform = function(x) round(x^2)))
+    m <- leaflet::addPolygons(
+      m, data = cells, weight = 0.5, color = "#333", fillOpacity = 0.7,
+      fillColor = pal(sqrt(cells$catch_weight_mt)),
+      label = sprintf("Cell %s: %s t (all groups)", cells$grid_id, fmt_n(cells$catch_weight_mt, 1))
+    )
   }
-  # Aggregate over the grouping fields so each cell is drawn once.
-  totals <- tapply(data$catch_weight_mt, data$grid_id, sum)
-  cells <- data[!duplicated(data$grid_id), "grid_id"]
-  cells$catch_weight_mt <- as.numeric(totals[as.character(cells$grid_id)])
-  cells <- sf::st_shift_longitude(sf::st_transform(cells, 4326))  # keep the Aleutians together
-  pal <- leaflet::colorNumeric("viridis", domain = sqrt(cells$catch_weight_mt))
-  bb <- sf::st_bbox(cells)
-  m <- leaflet::fitBounds(m, bb[["xmin"]], bb[["ymin"]], bb[["xmax"]], bb[["ymax"]])
-  m <- leaflet::addLegend(m, "bottomright", pal = pal, values = sqrt(cells$catch_weight_mt),
-                          title = "Catch (t)", opacity = 0.8,
-                          labFormat = leaflet::labelFormat(transform = function(x) round(x^2)))
-  leaflet::addPolygons(
-    m, data = cells, weight = 0.5, color = "#333", fillOpacity = 0.7,
-    fillColor = pal(sqrt(cells$catch_weight_mt)),
-    label = sprintf("Cell %s: %s t (all groups)", cells$grid_id, fmt_n(cells$catch_weight_mt, 1))
-  )
+
+  # Spatial filter outlines on top of the cells.
+  if (has_areas) {
+    modes <- c("include", "exclude")
+    present <- modes %in% areas$mode
+    m <- leaflet::addPolygons(
+      m, data = areas, fill = FALSE, weight = 2, dashArray = "6 4", opacity = 0.9,
+      color = ifelse(areas$mode == "include", "#1f6feb", "#d1242f"),
+      label = paste0(ifelse(areas$mode == "include", "Included: ", "Excluded: "), areas$source, " ", areas$code)
+    )
+    m <- leaflet::addLegend(m, "topright", colors = c("#1f6feb", "#d1242f")[present],
+                            labels = c("Included area", "Excluded area")[present], opacity = 0.9)
+  }
+
+  extent <- if (nrow(data)) cells else if (has_areas) areas
+  if (is.null(extent)) return(leaflet::setView(m, lng = -160, lat = 58, zoom = 3))
+  bb <- sf::st_bbox(extent)
+  leaflet::fitBounds(m, bb[["xmin"]], bb[["ymin"]], bb[["xmax"]], bb[["ymax"]])
 }
 
 #' Bootstrap badge

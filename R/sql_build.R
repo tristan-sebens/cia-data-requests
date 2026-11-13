@@ -3,7 +3,7 @@
 #' Produces standalone, commented PostgreSQL/PostGIS SQL from a dataset spec.
 #' Every query passes through the same steps:
 #'
-#' 1. `hauls_f`     hauls matching the haul-level filters
+#' 1. `hauls_f`     hauls matching the haul-level filters and spatial filters
 #' 2. `overlay`     intersect haul polygons with grid cells; share of haul area
 #' 3. `trimmed`     drop small overlaps (`apportionment.min_share`), except exempt haul types
 #' 4. `alloc`       renormalise shares so each haul's shares sum to 1
@@ -80,13 +80,22 @@ sql_parts <- function(spec, cfg) {
   haul_cols <- setdiff(haul_cols, c("haul_id", "haul_polygon"))
 
   hauls_f <- paste0(
-    "-- 1. Hauls matching the haul-level filters\n",
+    "-- 1. Hauls matching the haul-level filters",
+    if (length(spec$spatial_filters)) paste0(
+      " and spatial filters.\n",
+      "--    A haul matches an area if their footprints share some area (touching\n",
+      "--    boundaries does not count); matching hauls are kept or dropped whole.\n",
+      "--    The checks are written \"(...) IS TRUE\" so PostgreSQL evaluates them per\n",
+      "--    haul instead of as a join, whose row estimates would distort the plan."),
+    "\n",
     "hauls_f AS (\n",
     "    SELECT ", col_as("h", H$key, "haul_id"),
     if (!use_alloc_table) paste0(",\n           ", col_as("h", H$geom, "haul_polygon")),
     paste(prefix(",\n           h.", haul_cols), collapse = ""), "\n",
     "    FROM ", hauls_tbl, " h",
-    sql_where(haul_filters, cfg, "h"), "\n",
+    sql_where(haul_filters, cfg, "h",
+              extra = vapply(spec$spatial_filters, spatial_filter_sql, "", cfg = cfg,
+                             haul_geom = paste0("h.", H$geom))), "\n",
     ")"
   )
 
@@ -291,12 +300,44 @@ rule_sql <- function(r) {
 
 #' WHERE clause for a set of (validated, normalised) filters
 #' @noRd
-sql_where <- function(filters, cfg, alias) {
-  if (!length(filters)) return("")
-  clauses <- vapply(names(filters), function(f) {
-    filter_sql(f, filters[[f]], cfg$fields[[f]]$kind, alias)
-  }, "")
+sql_where <- function(filters, cfg, alias, extra = character()) {
+  clauses <- c(
+    vapply(names(filters), function(f) filter_sql(f, filters[[f]], cfg$fields[[f]]$kind, alias), ""),
+    extra
+  )
+  if (!length(clauses)) return("")
   paste0("\n    WHERE ", paste(clauses, collapse = "\n      AND "))
+}
+
+#' SQL condition for one spatial filter, applied to hauls
+#'
+#' `[NOT] EXISTS` over the areas view: the haul overlaps at least one of the
+#' chosen areas with a shared area greater than zero.
+#' @noRd
+spatial_filter_sql <- function(s, cfg, haul_geom) {
+  V <- cfg$areas$view
+  geom <- paste0("sa.", V$geom)
+  paste0(
+    "(", if (s$mode == "exclude") "NOT ", "EXISTS (  -- ", spatial_filter_text(s, cfg), "\n",
+    "          SELECT 1 FROM ", V$schema, ".", V$table, " sa\n",
+    "          WHERE sa.", V$source, " = ", sql_quote(s$source), "\n",
+    "            AND sa.", V$code, "::text IN (", paste(sql_quote(s$codes), collapse = ", "), ")\n",
+    "            AND ST_Intersects(", geom, ", ", haul_geom, ")\n",
+    "            AND NOT ST_Touches(", geom, ", ", haul_geom, "))) IS TRUE"
+  )
+}
+
+#' One-line description of a spatial filter, e.g.
+#' "include hauls overlapping NMFS reporting area 610 or 620"
+#' @noRd
+spatial_filter_text <- function(s, cfg) {
+  codes <- s$codes
+  listed <- if (length(codes) > 12) {
+    paste0(paste(codes[1:10], collapse = ", "), " and ", length(codes) - 10, " more")
+  } else if (length(codes) > 1) {
+    paste0(paste(codes[-length(codes)], collapse = ", "), " or ", codes[length(codes)])
+  } else codes
+  comment_safe(paste0(s$mode, " hauls overlapping ", area_source_label(s$source, cfg), " ", listed))
 }
 
 #' @noRd
@@ -354,6 +395,7 @@ sql_header <- function(spec, cfg, mode) {
     }, "")
   } else "none (all records)"
   rules <- vapply(cfg$rules, function(r) r$description %||% r$name, "")
+  spatial <- vapply(spec$spatial_filters, spatial_filter_text, "", cfg = cfg)
 
   lines <- c(
     paste0("CIA data request dataset: ", spec$name),
@@ -364,6 +406,7 @@ sql_header <- function(spec, cfg, mode) {
     paste0("Grid:      ", grid$label %||% spec$grid, " (", grid$schema, ".", grid$table, ")"),
     paste0("Filters:   ", filters[1]),
     if (length(filters) > 1) paste0("           ", filters[-1]),
+    if (length(spatial)) paste0(c("Spatial:   ", rep("           ", length(spatial) - 1)), spatial),
     paste0("Grouping:  ", paste(c("grid cell", spec$group_by), collapse = ", ")),
     "",
     "Confidentiality:",

@@ -67,7 +67,15 @@ run_dataset_checked <- function(con, spec, cfg) {
     return(fail(paste0("Filter values not found in the database: ",
                        paste0(names(by_field), " = ", by_field, collapse = "; "))))
   }
-  tryCatch(run_dataset(con, spec, cfg), error = function(e) fail(conditionMessage(e)))
+  res <- tryCatch(run_dataset(con, spec, cfg), error = function(e) fail(conditionMessage(e)))
+  if (inherits(res, "cia_dataset_result")) {
+    # For the preview map only; a failure here should not fail the dataset.
+    res$areas <- tryCatch(area_outlines(con, res$spec, cfg), error = function(e) {
+      log_warn("Could not load spatial filter outlines for '", spec$name, "': ", conditionMessage(e))
+      NULL
+    })
+  }
+  res
 }
 
 #' @export

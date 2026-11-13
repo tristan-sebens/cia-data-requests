@@ -1,6 +1,6 @@
 #' Load and validate the app configuration
 #'
-#' Reads `schema.yaml`, `grids.yaml` and `rules.yaml`. Every identifier in the
+#' Reads `schema.yaml`, `grids.yaml`, `rules.yaml` and (optional) `areas.yaml`. Every identifier in the
 #' configuration is checked to be a plain lowercase SQL name, so it can be
 #' written into SQL unquoted (keeps generated SQL readable) without risk.
 #'
@@ -9,7 +9,7 @@
 #' @param schema Schema holding `hauls` / `haul_catch`. Defaults to the
 #'   `CIA_PG_SCHEMA` environment variable, or `"data"`.
 #' @return A `cia_config` list with elements `schema`, `hauls`, `haul_catch`,
-#'   `fields`, `grids`, `rules`.
+#'   `fields`, `grids`, `rules`, `areas` (`NULL` without `areas.yaml`).
 #' @export
 load_config <- function(dir = system.file("config", package = "ciarequests"),
                         schema = cia_schema()) {
@@ -21,7 +21,8 @@ load_config <- function(dir = system.file("config", package = "ciarequests"),
     fields     = read("schema.yaml")$fields,
     apportionment = read("schema.yaml")$apportionment %||% list(min_share = 0),
     grids      = read("grids.yaml"),
-    rules      = read("rules.yaml")
+    rules      = read("rules.yaml"),
+    areas      = if (file.exists(file.path(dir, "areas.yaml"))) read("areas.yaml")
   )
   class(cfg) <- "cia_config"
   validate_config(cfg)
@@ -81,6 +82,15 @@ validate_config <- function(cfg) {
     cfg_error("apportionment.exempt_haul_types needs hauls.haul_type to be configured")
   }
 
+  if (!is.null(cfg$areas)) {
+    for (k in c("schema", "table", "source", "code", "geom")) {
+      check_ident(cfg$areas$view[[k]], paste0("areas.view.", k))
+    }
+    for (s in names(cfg$areas$sources)) {
+      if (!is_area_source(s)) cfg_error("areas.sources: invalid source name '", s, "'")
+    }
+  }
+
   if (!length(cfg$rules)) cfg_error("at least one confidentiality rule is required")
   for (r in cfg$rules) validate_rule(r)
 
@@ -124,3 +134,15 @@ check_ident <- function(x, what) {
 
 #' @noRd
 cfg_error <- function(...) stop("Invalid configuration: ", ..., call. = FALSE)
+
+#' Is `x` a valid spatial area source name (as stored in the areas view)?
+#' @noRd
+is_area_source <- function(x) {
+  is.character(x) && length(x) == 1 && !is.na(x) && grepl("^[A-Za-z0-9_]{1,64}$", x)
+}
+
+#' Display name of an area source
+#' @noRd
+area_source_label <- function(source, cfg) {
+  cfg$areas$sources[[source]]$label %||% source
+}

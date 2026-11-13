@@ -28,6 +28,15 @@ Docker Desktop (WSL2 backend on Windows).
 
 3. Open <http://127.0.0.1:3838>.
 
+## Spatial filters
+
+Datasets can keep or drop hauls that overlap chosen areas (NMFS reporting
+areas, ADF&G statistical areas, hex cells, ...). The areas come from one view
+in the CIA database with columns `source`, `area_code` and `shape`
+(EPSG:3338); its name, column names and the display names of the sources are
+set in `inst/config/areas.yaml`. At start-up the log lists the sources found
+in the view and how many areas each has.
+
 ## Logs and troubleshooting
 
 The app logs every action, database query and background job, with timings, to

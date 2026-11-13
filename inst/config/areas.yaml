@@ -1,0 +1,25 @@
+# Spatial filter areas.
+#
+# One table or view holds every area that can be used as a spatial filter,
+# one row per area, with a source (which set of areas it belongs to), a code
+# and a polygon in EPSG:3338. In production this is the dbt model unioning
+# NMFS reporting areas, ADF&G statistical areas, the hex grids, etc.
+# Business rules (e.g. only current stat area definitions) live in the view.
+#
+# A dataset's spatial filter names a source and one or more codes. New
+# sources added to the view show up in the app automatically.
+
+view:
+  schema: data
+  table: spatial_areas
+  source: source       # text: which set of areas, e.g. NMFS_REPORTING_AREA
+  code: area_code      # the area's code within its source (int or text)
+  geom: shape          # Polygon/MultiPolygon, EPSG:3338
+
+# Display names and order in the editor. Sources in the view that are not
+# listed here appear after these, under their own name.
+sources:
+  NMFS_REPORTING_AREA: {label: "NMFS reporting area"}
+  ADFG_STAT_AREA:      {label: "ADF&G statistical area"}
+  HEX_20KM:            {label: "Hex grid cell, 20 km"}
+  HEX_8KM:             {label: "Hex grid cell, 8 km"}

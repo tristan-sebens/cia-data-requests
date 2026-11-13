@@ -163,7 +163,69 @@ unknown_filter_values <- function(con, spec, cfg) {
     missing <- setdiff(v, found)
     if (length(missing)) out <- rbind(out, data.frame(field = f, value = missing))
   }
+  V <- cfg$areas$view
+  for (s in spec$spatial_filters) {
+    found <- log_timed(paste0("Check area codes for ", s$source), DBI::dbGetQuery(con, paste0(
+      "SELECT DISTINCT ", V$code, "::text AS v FROM ", V$schema, ".", V$table,
+      " WHERE ", V$source, " = ", sql_quote(s$source),
+      " AND ", V$code, "::text IN (", paste(sql_quote(s$codes), collapse = ", "), ")")))$v
+    missing <- setdiff(s$codes, found)
+    if (length(missing)) {
+      out <- rbind(out, data.frame(field = paste0("area (", area_source_label(s$source, cfg), ")"),
+                                   value = missing))
+    }
+  }
   out
+}
+
+#' Codes of every spatial filter area, by source
+#'
+#' @return A data frame with columns `source`, `code` (text), ordered by
+#'   source then code.
+#' @noRd
+area_values <- function(con, cfg) {
+  V <- cfg$areas$view
+  x <- log_timed(paste0("Load spatial filter areas from ", V$schema, ".", V$table), level = "INFO",
+                 slow_ms = 5000, DBI::dbGetQuery(con, paste0(
+    "SELECT DISTINCT ", V$source, " AS source, ", V$code, "::text AS code FROM ", V$schema, ".", V$table)))
+  x <- x[order(x$source, suppressWarnings(as.numeric(x$code)), x$code), , drop = FALSE]
+  rownames(x) <- NULL
+  log_info("Spatial filter areas: ", paste0(names(table(x$source)), " (", table(x$source), ")", collapse = ", "))
+  x
+}
+
+#' Area sources in display order: those configured in `areas.yaml` first (in
+#' that order), then any others found in the view, alphabetically
+#' @noRd
+order_area_sources <- function(sources, cfg) {
+  known <- intersect(names(cfg$areas$sources), sources)
+  c(known, sort(setdiff(sources, known)))
+}
+
+#' Outlines of a dataset's spatial filter areas, for the preview map
+#'
+#' @return An `sf` data frame (EPSG:4326, simplified for display) with columns
+#'   `mode`, `source`, `code`; `NULL` if the dataset has no spatial filters.
+#' @noRd
+area_outlines <- function(con, spec, cfg) {
+  if (!length(spec$spatial_filters)) return(NULL)
+  V <- cfg$areas$view
+  parts <- lapply(spec$spatial_filters, function(s) {
+    sql <- paste0(
+      "SELECT ", V$source, " AS source, ", V$code, "::text AS code, ",
+      "ST_Transform(ST_SimplifyPreserveTopology(", V$geom, ", 250), 4326) AS geom ",
+      "FROM ", V$schema, ".", V$table,
+      " WHERE ", V$source, " = ", sql_quote(s$source),
+      " AND ", V$code, "::text IN (", paste(sql_quote(s$codes), collapse = ", "), ")")
+    d <- DBI::dbGetQuery(con, sql)
+    if (!nrow(d)) return(NULL)
+    sf::st_sf(mode = s$mode, source = d$source, code = d$code,
+              geometry = sf::st_set_crs(sf::st_as_sfc(structure(as.character(d$geom), class = "WKB"),
+                                                     EWKB = TRUE), 4326))
+  })
+  parts <- Filter(Negate(is.null), parts)
+  if (!length(parts)) return(NULL)
+  do.call(rbind, parts)
 }
 
 #' @noRd

@@ -28,3 +28,6 @@ fake_stats <- function(disclosable, dropped = 4) {
     dropped_disclosable = disclosable))
 }
 
+
+# Snapshot transform: the package version appears in SQL headers.
+hide_version <- function(x) sub("ciarequests [0-9.]+", "ciarequests <version>", x)

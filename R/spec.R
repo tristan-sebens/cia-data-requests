@@ -9,16 +9,22 @@
 #' @param group_by Character vector of field names to group by, in output
 #'   column order. The grid cell is always included and need not be listed.
 #' @param description Optional free-text description.
+#' @param spatial_filters List of spatial filters, each
+#'   `list(mode = "include" | "exclude", source = , codes = )`: keep (or drop)
+#'   hauls whose footprint overlaps any of the areas `codes` of the area
+#'   source `source` (see `areas.yaml`). Multiple spatial filters are combined
+#'   with AND, like attribute filters.
 #' @return A `cia_dataset_spec`.
 #' @export
 dataset_spec <- function(name, grid, filters = list(), group_by = character(),
-                         description = "") {
+                         description = "", spatial_filters = list()) {
   spec <- list(
     name        = name,
     description = description,
     grid        = grid,
     filters     = filters,
-    group_by    = as.character(group_by)
+    group_by    = as.character(group_by),
+    spatial_filters = spatial_filters
   )
   class(spec) <- "cia_dataset_spec"
   spec
@@ -94,6 +100,26 @@ validate_spec <- function(spec, cfg) {
   if (length(unknown)) err("unknown grouping field(s): ", paste(unknown, collapse = ", "))
   if (anyDuplicated(spec$group_by)) err("a grouping field is listed more than once")
 
+  # Spatial filters
+  sfs <- spec$spatial_filters %||% list()
+  if (length(sfs) && is.null(cfg$areas)) err("spatial filters need areas.yaml to be configured")
+  if (!is.list(sfs) || !is.null(names(sfs))) err("spatial_filters must be an unnamed list")
+  spec$spatial_filters <- lapply(seq_along(sfs), function(i) {
+    s <- sfs[[i]]
+    what <- paste0("spatial filter ", i)
+    if (!is.list(s) || length(setdiff(names(s), c("mode", "source", "codes")))) {
+      err(what, " must be list(mode = , source = , codes = )")
+    }
+    if (!isTRUE(s$mode %in% c("include", "exclude"))) err(what, ": mode must be 'include' or 'exclude'")
+    if (!is_area_source(s$source)) err(what, ": choose an area type")
+    codes <- as.character(unlist(s$codes))
+    if (!length(codes)) err(what, " (", area_source_label(s$source, cfg), "): choose at least one area")
+    if (anyNA(codes) || any(!nzchar(codes))) err(what, ": area codes must be non-empty")
+    codes <- unique(codes)
+    list(mode = s$mode, source = s$source,
+         codes = codes[order(suppressWarnings(as.numeric(codes)), codes)])
+  })
+
   invisible(spec)
 }
 
@@ -102,6 +128,12 @@ validate_spec <- function(spec, cfg) {
 spec_to_json <- function(spec) {
   x <- unclass(spec)
   x$filters <- if (length(x$filters)) x$filters else structure(list(), names = character())
+  # Omitted when empty, so specs from before spatial filters keep their JSON.
+  if (length(x$spatial_filters)) {
+    x$spatial_filters <- lapply(x$spatial_filters, function(s) { s$codes <- I(s$codes); s })
+  } else {
+    x$spatial_filters <- NULL
+  }
   jsonlite::toJSON(x, auto_unbox = TRUE, null = "null", pretty = FALSE, digits = NA)
 }
 
@@ -117,7 +149,10 @@ spec_from_json <- function(json) {
     grid        = x$grid,
     filters     = filters,
     group_by    = as.character(unlist(x$group_by)),
-    description = x$description %||% ""
+    description = x$description %||% "",
+    spatial_filters = lapply(x$spatial_filters, function(s) {
+      list(mode = s$mode, source = s$source, codes = as.character(unlist(s$codes)))
+    })
   )
 }
 
