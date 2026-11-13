@@ -6,7 +6,7 @@ onto a spatial grid, the confidentiality rule (records must aggregate at least
 3 distinct vessels) is applied automatically, and approved datasets are
 packaged into a GeoPackage and uploaded to Google Drive.
 
-**Status:** early development (build step 1 of 7 done). See
+**Status:** feature-complete for a first trial (build steps 1–6 of 7 done). See
 [docs/PLAN.md](docs/PLAN.md) for the design and build plan.
 
 No data or credentials are stored in this repository.
@@ -17,7 +17,9 @@ Docker Desktop (WSL2 backend on Windows).
 
 ## Running
 
-1. Copy `.env.example` to `.env` and fill in the database connection.
+1. Copy `.env.example` to `.env` and fill in the database connection and the
+   upload root (`CIA_RCLONE_REMOTE`). Check where your rclone config lives with
+   `rclone config file`; if it is not `%APPDATA%\rclone`, set `RCLONE_CONFIG_DIR`.
 2. Build and start the app:
 
    ```bash
@@ -25,6 +27,17 @@ Docker Desktop (WSL2 backend on Windows).
    ```
 
 3. Open <http://127.0.0.1:3838>.
+
+## Workflow
+
+1. **New request**: title, requester, and the Drive folder (create and share
+   it in Drive first).
+2. **Datasets**: add one per layer the recipient wants (filters + grouping);
+   duplicate to make variants.
+3. **Preview**: check records, suppression, the map and the SQL; **Approve**.
+4. **Package**: builds the GeoPackage, SQL files and README, and uploads them.
+
+Any edit after approval requires a new preview and approval before packaging.
 
 The SQLite request database and all outputs are stored in
 `%LOCALAPPDATA%\cia-data-requests` (override with `CIA_DATA_DIR` in `.env`).
@@ -39,7 +52,8 @@ docker compose --profile test run --rm tests
 ```
 
 Run the app against the synthetic data, with source mounted live, at
-<http://127.0.0.1:3839>:
+<http://127.0.0.1:3839> ("uploads" go to a local folder inside the dev volume,
+not Google Drive):
 
 ```bash
 docker compose --profile dev up

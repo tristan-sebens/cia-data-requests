@@ -176,13 +176,25 @@ catch is recorded internally only.
 
 ## App flow
 
-1. **Requests list** — search, last run, status, suppression summary.
-2. **Request editor** — metadata, datasets (add / duplicate / reorder / delete).
-3. **Dataset editor** — name (layer name), grid, filters, grouping.
-4. **Preview** — table + map per dataset, suppression report, generated SQL;
-   **Approve**.
-5. **Package** — background run with progress.
-6. **Run history** — timing, stats, errors, exact SQL; rerun.
+Sidebar: request list (newest first, last run status) and **New request**.
+Per request, five tabs:
+
+1. **Details**: title, requester, contact, Drive folder (below the fixed
+   upload root), internal notes; archive / delete.
+2. **Datasets**: table with filters, grouping and approval status; add, edit,
+   duplicate, reorder, delete. The editor offers filter values loaded from the
+   database, so codes cannot be mistyped; validation errors stay in the editor.
+3. **Preview**: runs every dataset in a background R process (live progress
+   log). Per dataset: suppression table, whether the README will report the
+   withheld totals, off-grid catch, map of delivered cells, first 500 rows,
+   and the SQL. **Approve these results** appears after a successful preview.
+4. **Package**: approval checklist, destination, **Package and upload**
+   (background, live log), last package run, **Retry upload** on failure.
+5. **History**: every run with per-dataset statistics, errors, exact SQL and
+   the upload log.
+
+Previews and packaging run in a separate R process (`callr`) so the UI stays
+responsive; only one job runs at a time.
 
 ## Deployment
 
@@ -227,7 +239,7 @@ threshold, and a generated hex grid in EPSG:3338.
 3. ~~Execution + suppression stats.~~ Done.
 4. ~~SQLite store.~~ Done.
 5. ~~Packager, README, rclone upload — full pipeline usable from the R console.~~ Done.
-6. Shiny UI.
+6. ~~Shiny UI.~~ Done.
 7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
 
 ## Future

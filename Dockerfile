@@ -23,7 +23,8 @@ RUN curl -fsSL -o /tmp/rclone.zip \
     install -m 0755 "/tmp/rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}/rclone" /usr/local/bin/rclone && \
     rm -rf /tmp/rclone*
 
-# R packages not already in the base image go here (install2.r --error --skipinstalled ...).
+# R packages not already in the base image go here (install2.r --error --skipinstalled ...);
+# they resolve from the pinned snapshot.
 
 WORKDIR /app
 COPY . /app

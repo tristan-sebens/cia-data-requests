@@ -11,9 +11,13 @@ Encoding: UTF-8
 Depends:
     R (>= 4.1)
 Imports:
+    bslib,
+    callr,
     DBI,
     digest,
+    htmltools,
     jsonlite,
+    leaflet,
     processx,
     RPostgres,
     RSQLite,
@@ -22,6 +26,7 @@ Imports:
     utils,
     yaml
 Suggests:
+    pkgload,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

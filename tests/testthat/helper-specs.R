@@ -19,3 +19,12 @@ example_specs <- function() {
                  group_by = c("harvest_sector", "processing_sector", "species_code"))
   )
 }
+
+# Suppression stats for rendering tests.
+fake_stats <- function(disclosable, dropped = 4) {
+  suppression_stats(data.frame(
+    rows_kept = 96L, rows_dropped = as.integer(dropped), weight_kept = 990, weight_dropped = 10,
+    count_kept = 9000, count_dropped = 1000, weight_source = 1000, count_source = 10000,
+    dropped_disclosable = disclosable))
+}
+

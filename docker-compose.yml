@@ -87,6 +87,8 @@ services:
       <<: *synthetic-db
       CIA_REQUESTS_DB: /data/requests.sqlite
       CIA_OUTPUT_DIR: /data/outputs
+      CIA_DEV_PKG: /app               # background jobs load the package from source
+      CIA_RCLONE_REMOTE: /data/drive  # "uploads" go to a local folder, not Google Drive
     volumes:
       - ./:/app
       - dev-data:/data

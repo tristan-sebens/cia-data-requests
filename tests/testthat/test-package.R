@@ -17,13 +17,6 @@ test_that("file_slug makes safe file names", {
   expect_equal(file_slug("!!!", fallback = "request_3"), "request_3")
 })
 
-fake_stats <- function(disclosable, dropped = 4) {
-  suppression_stats(data.frame(
-    rows_kept = 96L, rows_dropped = as.integer(dropped), weight_kept = 990, weight_dropped = 10,
-    count_kept = 9000, count_dropped = 1000, weight_source = 1000, count_source = 10000,
-    dropped_disclosable = disclosable))
-}
-
 test_that("the README only reports suppressed catch when that is itself non-confidential", {
   cfg <- cfg_default()
   req <- list(id = 7, title = "Pollock request", requester = "Org X")
