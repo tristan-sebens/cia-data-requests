@@ -13,6 +13,7 @@ Imports:
     digest,
     jsonlite,
     RPostgres,
+    RSQLite,
     sf,
     shiny,
     utils,

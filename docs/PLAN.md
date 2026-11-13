@@ -111,14 +111,26 @@ literals.
 **SQLite is the record; the output directory holds artefacts.**
 
 ```
-requests      id, requester, contact, drive_path, notes, created_at
-datasets      id, request_id, name, position, spec_json
-runs          id, request_id, kind (preview|package), started_at, finished_at,
-              status, error, app_version, gpkg_path, upload_status
-run_datasets  run_id, dataset_id, sql_text, duration_s,
-              rows_kept, rows_dropped, weight_kept, weight_dropped,
-              count_kept, count_dropped
+requests      id, title, requester, contact, drive_path, notes, archived,
+              created_at, updated_at
+datasets      id, request_id, name, position, spec_json,
+              approved_sql_hash, approved_run_id, approved_at, created_at, updated_at
+runs          id, request_id, kind (preview|package), status (running|succeeded|failed),
+              started_at, finished_at, error, app_version, output_dir, gpkg_path,
+              upload_status, upload_error, uploaded_at
+run_datasets  run_id, dataset_id, dataset_name, position, spec_json, sql_text,
+              sql_hash, error, duration_s, rows_kept, rows_dropped, weight_kept,
+              weight_dropped, count_kept, count_dropped, weight_off_grid, count_off_grid
 ```
+
+- Schema changes are numbered migrations tracked with `PRAGMA user_version`;
+  an app older than its store refuses to open it.
+- `run_datasets` copies each dataset's name, spec and SQL, so history stays
+  intact if a dataset is later edited or deleted.
+- Requests that have been packaged cannot be deleted, only archived.
+- On app start-up, runs left `running` are marked failed ("interrupted").
+- Previewing fails a dataset whose filters use values absent from the
+  database (almost always a typo); the run then cannot be approved.
 
 - The exact SQL executed is stored per run.
 - SQLite holds only specs and aggregate stats — no haul-level data.
@@ -200,7 +212,7 @@ threshold, and a generated hex grid in EPSG:3338.
 1. ~~Repo scaffold, Docker/compose, `.env.example`, synthetic PostGIS seed, CI.~~ Done.
 2. ~~Config + spec + SQL builder, with conservation and gate tests.~~ Done.
 3. ~~Execution + suppression stats.~~ Done.
-4. SQLite store.
+4. ~~SQLite store.~~ Done.
 5. Packager, README, rclone upload — full pipeline usable from the R console.
 6. Shiny UI.
 7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
