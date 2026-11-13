@@ -106,24 +106,26 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
 }
 
 #' Suppression statistics as a small HTML table
+#'
+#' Measures as columns, delivered / withheld / total / % as rows, so it fits
+#' a narrow column beside the map.
 #' @noRd
 stats_table <- function(s) {
-  row <- function(label, kept, dropped, total, pct) {
-    htmltools::tags$tr(htmltools::tags$th(class = "text-nowrap", label), htmltools::tags$td(kept),
-                       htmltools::tags$td(dropped), htmltools::tags$td(total),
-                       htmltools::tags$td(pct))
+  row <- function(label, records, weight, count, cls = NULL) {
+    htmltools::tags$tr(class = cls, htmltools::tags$th(class = "text-nowrap", label),
+                       lapply(list(records, weight, count), htmltools::tags$td, class = "text-end"))
   }
   htmltools::tags$table(
-    class = "table table-sm mb-2",
+    class = "table table-sm small mb-2",
     htmltools::tags$thead(htmltools::tags$tr(
-      htmltools::tags$th(""), htmltools::tags$th("Delivered"), htmltools::tags$th("Withheld"),
-      htmltools::tags$th("Total"), htmltools::tags$th("% withheld"))),
+      htmltools::tags$th(""), htmltools::tags$th(class = "text-end", "Records"),
+      htmltools::tags$th(class = "text-end", "Weight (t)"), htmltools::tags$th(class = "text-end", "Count"))),
     htmltools::tags$tbody(
-      row("Records", fmt_n(s$rows_kept), fmt_n(s$rows_dropped), fmt_n(s$rows_total), fmt_pct(s$pct_rows_dropped)),
-      row("Catch weight (t)", fmt_n(s$weight_kept, 1), fmt_n(s$weight_dropped, 1), fmt_n(s$weight_total, 1),
-          fmt_pct(s$pct_weight_dropped)),
-      row("Catch count", fmt_n(s$count_kept), fmt_n(s$count_dropped), fmt_n(s$count_total),
-          fmt_pct(s$pct_count_dropped))
+      row("Delivered", fmt_n(s$rows_kept), fmt_n(s$weight_kept, 1), fmt_n(s$count_kept)),
+      row("Withheld", fmt_n(s$rows_dropped), fmt_n(s$weight_dropped, 1), fmt_n(s$count_dropped)),
+      row("Total", fmt_n(s$rows_total), fmt_n(s$weight_total, 1), fmt_n(s$count_total)),
+      row("% withheld", fmt_pct(s$pct_rows_dropped), fmt_pct(s$pct_weight_dropped),
+          fmt_pct(s$pct_count_dropped), cls = "text-muted")
     )
   )
 }

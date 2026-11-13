@@ -212,8 +212,8 @@ preview_results_ui <- function(pv, cfg) {
         fillable = FALSE,
         htmltools::div(
           class = "row g-3",
-          htmltools::div(class = "col-xl-6", stats_table(r$stats), stats_notes(r$stats)),
-          htmltools::div(class = "col-xl-6", leaflet::leafletOutput(paste0("pv_map_", i), height = 340))
+          htmltools::div(class = "col-lg-4", stats_table(r$stats), stats_notes(r$stats)),
+          htmltools::div(class = "col-lg-8", leaflet::leafletOutput(paste0("pv_map_", i), height = 680))
         ),
         htmltools::tags$details(
           class = "mt-3",

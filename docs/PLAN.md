@@ -242,9 +242,44 @@ threshold, and a generated hex grid in EPSG:3338.
 6. ~~Shiny UI.~~ Done.
 7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
 
+## Spatial filters (next)
+
+Requests often limit a dataset to (or, rarely, exclude) one or more
+management areas. Design:
+
+- **Area layers** are registered in `inst/config/areas.yaml`, like grids: a
+  table with an id column and a polygon column in EPSG:3338 (optionally a
+  label column), e.g. NMFS reporting areas, ADF&G groundfish and salmon
+  statistical areas, FMP areas (WGOA, EGOA, AI, EBS, NBS, ...).
+- **Spec:** a dataset has a list of spatial filters, each
+  `{mode: include | exclude, source: {layer: <area layer>, ids: [...]}}`.
+  Within a filter the areas are combined (any of them); separate filters are
+  combined with AND, like attribute filters.
+- **Applied up front**, in `hauls_f`, before apportionment: include keeps
+  hauls that overlap the areas; exclude drops them. "Overlap" means a shared
+  area greater than zero, so hauls that only touch a boundary (e.g.
+  statistical-area hauls next to the area) do not count.
+- The SQL file stays self-contained and readable: it names the area table
+  and ids. Unknown area ids fail the preview, like unknown codes.
+- README and preview describe the filter; the preview map outlines the areas.
+
+**Later: custom areas (WKT).** A polygon drawn for a specific request
+(exported from ArcMap etc. as WKT). It is defined **once per request** and
+stored with the request (name + WKT, validated as a polygon/multipolygon in
+EPSG:3338). Datasets reference it by name, as another kind of source:
+`source: {request_area: <name>}`. The SQL builder writes the WKT into each
+dataset's SQL (`ST_GeomFromText(..., 3338)`), so every `.sql` file still runs
+on its own, and editing the shape changes the SQL hash, which withdraws
+existing approvals. The include/exclude and filter-list structure above is
+designed so this is an addition, not a change.
+
 ## Future
 
-- Long-form code descriptions from lookup tables.
+- Code labels: each set field has a lookup table (code + readable label).
+  Show "code: label" in the editor dropdowns (searchable by either), and in
+  the README's filter descriptions. Configure the lookup table per field in
+  `schema.yaml`.
+- Custom spatial filter areas (WKT), defined once per request (see above).
 - Ownership-based rule (e.g. >= 2 distinct owners) and/or excluding area hauls
   from vessel counts.
 - Statistical disclosure control (noise) for overlapping requests.
