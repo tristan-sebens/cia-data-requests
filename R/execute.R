@@ -54,9 +54,13 @@ sql_hash <- function(sql) {
 #'     share removed by the confidentiality rules (0-100)
 #'   * `weight_off_grid`, `count_off_grid`: catch from hauls with no overlap
 #'     with the grid (not delivered, not counted as suppression)
+#'   * `dropped_disclosable`: whether the suppressed records, taken together,
+#'     satisfy the confidentiality rules, so their totals may be reported to
+#'     the recipient (TRUE when nothing was suppressed)
 #' @export
 suppression_stats <- function(diag) {
   d <- as.list(diag[1, , drop = FALSE])
+  disclosable <- if (is.null(d$dropped_disclosable)) NA else as.logical(d$dropped_disclosable)
   d <- lapply(d, as.numeric)
   pct <- function(dropped, kept) {
     total <- dropped + kept
@@ -78,7 +82,8 @@ suppression_stats <- function(diag) {
     weight_source      = d$weight_source,
     count_source       = d$count_source,
     weight_off_grid    = max(0, d$weight_source - d$weight_kept - d$weight_dropped),
-    count_off_grid     = max(0, d$count_source - d$count_kept - d$count_dropped)
+    count_off_grid     = max(0, d$count_source - d$count_kept - d$count_dropped),
+    dropped_disclosable = d$rows_dropped == 0 || isTRUE(disclosable)
   )
 }
 

@@ -204,9 +204,29 @@ sql_parts <- function(spec, cfg) {
     ")"
   )
 
+  match_group <- paste0(
+    "g.grid_id = a.grid_id",
+    paste(prefix("\n                            AND g.",
+                 prefix("", spec$group_by) |> (\(x) if (length(x)) paste0(x, " IS NOT DISTINCT FROM a.", x) else x)()),
+          collapse = "")
+  )
+  dropped_diag <- paste0(
+    "-- Can the suppressed records be described in aggregate (e.g. \"x t of catch\n",
+    "-- was suppressed\")? Only if, taken together, they satisfy the same rules.\n",
+    "dropped AS (\n",
+    "    SELECT (", paste(rule_exprs, collapse = "\n            AND "), ") AS disclosable\n",
+    "    FROM (\n",
+    "        SELECT a.* FROM apportioned a\n",
+    "        WHERE EXISTS (SELECT 1 FROM groups g\n",
+    "                      WHERE NOT g.passes\n",
+    "                        AND ", match_group, ")\n",
+    "    ) d\n",
+    ")"
+  )
+
   list(
     ctes = c(hauls_f, alloc_ctes, apportioned),
-    tail_ctes = list(deliver = agg_deliver, diagnostic = c(groups_diag, source_diag),
+    tail_ctes = list(deliver = agg_deliver, diagnostic = c(groups_diag, source_diag, dropped_diag),
                      allocation = character()),
     group_cols = group_cols,
     grid = grid,
@@ -237,7 +257,8 @@ sql_diagnostic_tail <- function(p) {
     "       COALESCE(SUM(count_n) FILTER (WHERE passes), 0)       AS count_kept,\n",
     "       COALESCE(SUM(count_n) FILTER (WHERE NOT passes), 0)   AS count_dropped,\n",
     "       (SELECT weight_mt FROM source)                        AS weight_source,\n",
-    "       (SELECT count_n FROM source)                          AS count_source\n",
+    "       (SELECT count_n FROM source)                          AS count_source,\n",
+    "       (SELECT disclosable FROM dropped)                     AS dropped_disclosable\n",
     "FROM groups;"
   )
 }
@@ -303,7 +324,8 @@ sql_quote <- function(x) {
 comment_safe <- function(x) gsub("[[:cntrl:]]+", " ", x)
 
 #' @noRd
-method_lines <- function(cfg) {
+method_lines <- function(cfg, audience = c("sql", "recipient")) {
+  audience <- match.arg(audience)
   A <- cfg$apportionment
   min_share <- A$min_share %||% 0
   exempt <- as.character(unlist(A$exempt_haul_types))
@@ -313,7 +335,10 @@ method_lines <- function(cfg) {
     "statistical area as their footprint.",
     if (min_share > 0) c(
       paste0("Overlaps covering less than ", 100 * min_share, "% of a haul's area are dropped",
-             if (length(exempt)) paste0(" (except ", paste(exempt, collapse = ", "), " hauls)") else "",
+             if (length(exempt)) {
+               if (audience == "recipient") " (except area-only hauls)"
+               else paste0(" (except ", paste(exempt, collapse = ", "), " hauls)")
+             } else "",
              "."),
       "Shares are renormalised to sum to 1 per haul."
     ) else "Shares are renormalised to sum to 1 per haul."

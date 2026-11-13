@@ -101,6 +101,12 @@ store_migrations <- list(
        count_off_grid  REAL,
        PRIMARY KEY (run_id, dataset_name)
      )"
+  ),
+  # 2: packaging
+  c(
+    "ALTER TABLE run_datasets ADD COLUMN dropped_disclosable INTEGER",
+    "ALTER TABLE runs ADD COLUMN upload_dest TEXT",
+    "ALTER TABLE runs ADD COLUMN upload_log TEXT"
   )
 )
 
@@ -358,21 +364,22 @@ record_run_dataset <- function(store, run_id, dataset_id, position, result = NUL
     INSERT INTO run_datasets (run_id, dataset_id, dataset_name, position, spec_json, sql_text,
                               sql_hash, error, duration_s, rows_kept, rows_dropped,
                               weight_kept, weight_dropped, count_kept, count_dropped,
-                              weight_off_grid, count_off_grid)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              weight_off_grid, count_off_grid, dropped_disclosable)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     params = list(run_id, val(dataset_id), spec$name, position,
                   as.character(spec_to_json(spec)), sql, sql_hash(sql),
                   if (is.null(error)) NA_character_ else error,
                   val(result$duration_s), val(s$rows_kept), val(s$rows_dropped),
                   val(s$weight_kept), val(s$weight_dropped), val(s$count_kept),
-                  val(s$count_dropped), val(s$weight_off_grid), val(s$count_off_grid)))
+                  val(s$count_dropped), val(s$weight_off_grid), val(s$count_off_grid),
+                  if (is.null(s)) NA_integer_ else as.integer(s$dropped_disclosable)))
   invisible(TRUE)
 }
 
 #' @rdname start_run
 #' @param status `"succeeded"` or `"failed"`.
 #' @param ... Other run fields to set: `output_dir`, `gpkg_path`,
-#'   `upload_status`, `upload_error`, `uploaded_at`.
+#'   `upload_status`, `upload_error`, `uploaded_at`, `upload_dest`, `upload_log`.
 #' @export
 finish_run <- function(store, run_id, status = c("succeeded", "failed"), error = NULL, ...) {
   status <- match.arg(status)
@@ -386,7 +393,8 @@ finish_run <- function(store, run_id, status = c("succeeded", "failed"), error =
 #' @export
 update_run <- function(store, run_id, ...) {
   changes <- list(...)
-  allowed <- c("output_dir", "gpkg_path", "upload_status", "upload_error", "uploaded_at")
+  allowed <- c("output_dir", "gpkg_path", "upload_status", "upload_error", "uploaded_at",
+               "upload_dest", "upload_log")
   bad <- setdiff(names(changes), allowed)
   if (length(bad)) stop("Cannot update run field(s): ", paste(bad, collapse = ", "), call. = FALSE)
   if (!length(changes)) return(invisible(FALSE))

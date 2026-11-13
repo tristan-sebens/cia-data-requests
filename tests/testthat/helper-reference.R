@@ -92,8 +92,12 @@ ref_aggregate <- function(con, spec, cfg, gated = TRUE, min_vessels = 3) {
   out$catch_weight_mt <- as.numeric(tapply(x$w, x$key, sum)[out$key])
   out$catch_count     <- as.numeric(tapply(x$n, x$key, sum)[out$key])
   out$n_vessels       <- as.integer(tapply(x$vessel_id, x$key, function(v) length(unique(v)))[out$key])
+  failing <- out$key[out$n_vessels < min_vessels]
+  dropped_vessels <- length(unique(x$vessel_id[x$key %in% failing]))
   if (gated) out <- out[out$n_vessels >= min_vessels, , drop = FALSE]
-  out[order(out$key), , drop = FALSE]
+  out <- out[order(out$key), , drop = FALSE]
+  attr(out, "dropped_vessels") <- dropped_vessels
+  out
 }
 
 # Run a dataset's delivered SQL and key the result the same way.

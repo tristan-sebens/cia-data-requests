@@ -141,16 +141,29 @@ run_datasets  run_id, dataset_id, dataset_name, position, spec_json, sql_text,
 
 ## Pipeline
 
-1. Execute each dataset's deliver query with `sf::st_read(con, query = ...)`
-   (no temp tables), plus its diagnostic query.
-2. Write all layers with `sf::st_write()` to a temp GeoPackage; rename into
-   place only when every layer succeeds.
-3. Write `.sql` files and `README.md` (request summary, filters/grouping per
-   dataset, suppression table, units, CRS, confidentiality rule text).
-4. `rclone copy` the run folder to the request's Drive path (via `processx`).
-   Drive folder creation and sharing stay manual.
-5. Each step updates the `runs` row; an interrupted run shows as failed.
-   Packaging runs in a background R process so the UI stays responsive.
+`package_request()` (requires every dataset approved against its current SQL):
+
+1. Re-run each dataset (deliver + diagnostic); refuse if its SQL no longer
+   matches the approved hash. Results recorded as a `package` run.
+2. Write into `run_<id>.partial/`: `<request>.gpkg` (one layer per dataset,
+   via `sf::st_write`), `NN_<dataset>.sql`, `README.md`. Rename to `run_<id>/`
+   only when everything is written; on failure the partial folder is removed
+   and the run marked failed.
+3. Upload with `rclone copy` to `<CIA_RCLONE_REMOTE>/<request drive folder>`
+   (fixed root; the per-request folder cannot contain `:`, `..` or a leading
+   `/`). Same-named files are overwritten. Files this app uploaded in the
+   request's previous delivery to the same folder that are no longer produced
+   are deleted; nothing else in the folder is touched. Drive folder creation
+   and sharing stay manual.
+4. Upload status is tracked separately from the build; `upload_run()` retries
+   a failed upload without rebuilding.
+
+**README suppression report.** Rows withheld are always reported. Withheld
+catch weight/count (and percentages) are reported only if the withheld
+records, taken together, satisfy the confidentiality rules (computed in the
+diagnostic query); otherwise publishing them would reveal the catch of the
+suppressed groups, since the recipient can sum the delivered rows. Off-grid
+catch is recorded internally only.
 
 ## Guardrails
 
@@ -213,7 +226,7 @@ threshold, and a generated hex grid in EPSG:3338.
 2. ~~Config + spec + SQL builder, with conservation and gate tests.~~ Done.
 3. ~~Execution + suppression stats.~~ Done.
 4. ~~SQLite store.~~ Done.
-5. Packager, README, rclone upload — full pipeline usable from the R console.
+5. ~~Packager, README, rclone upload — full pipeline usable from the R console.~~ Done.
 6. Shiny UI.
 7. Benchmark on-the-fly join vs precomputed allocation on real data; polish.
 

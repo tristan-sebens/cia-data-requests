@@ -77,6 +77,10 @@ test_that("diagnostic totals agree with the delivered rows and the reference", {
     expect_equal(d$weight_kept, sum(got$catch_weight_mt), tolerance = 1e-6)
     expect_equal(d$weight_dropped, sum(dropped$catch_weight_mt), tolerance = 1e-6)
     expect_equal(d$count_dropped, sum(dropped$catch_count), tolerance = 1e-6)
+    # Suppressed totals are disclosable only if the suppressed records together
+    # come from at least 3 vessels.
+    expect_identical(d$dropped_disclosable, attr(all_groups, "dropped_vessels") >= 3,
+                     label = paste(spec$name, "dropped_disclosable"))
   }
 })
 

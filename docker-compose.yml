@@ -34,10 +34,14 @@ services:
     environment:
       CIA_REQUESTS_DB: /data/requests.sqlite
       CIA_OUTPUT_DIR: /data/outputs
+      RCLONE_CONFIG: /config/rclone/rclone.conf
     volumes:
       # Persistent SQLite database and outputs. Defaults to %LOCALAPPDATA%\cia-data-requests
       # (Local, not Roaming, so a domain profile never syncs a live database).
       - ${CIA_DATA_DIR:-${LOCALAPPDATA}/cia-data-requests}:/data
+      # Your existing rclone setup (already authorised for Google Drive).
+      # Writable: rclone saves refreshed OAuth tokens back into rclone.conf.
+      - ${RCLONE_CONFIG_DIR:-${APPDATA}/rclone}:/config/rclone
     restart: unless-stopped
 
   postgis:

@@ -198,6 +198,19 @@
           FROM hauls_f f
           JOIN data.haul_catch c ON c.haul_id = f.haul_id
           WHERE c.species_code IN ('POLL')
+      ),
+      -- Can the suppressed records be described in aggregate (e.g. "x t of catch
+      -- was suppressed")? Only if, taken together, they satisfy the same rules.
+      dropped AS (
+          SELECT (COUNT(DISTINCT vessel_id) >= 3) AS disclosable
+          FROM (
+              SELECT a.* FROM apportioned a
+              WHERE EXISTS (SELECT 1 FROM groups g
+                            WHERE NOT g.passes
+                              AND g.grid_id = a.grid_id
+                                  AND g.year IS NOT DISTINCT FROM a.year
+                                  AND g.species_code IS NOT DISTINCT FROM a.species_code)
+          ) d
       )
       SELECT (COUNT(*) FILTER (WHERE passes))::integer         AS rows_kept,
              (COUNT(*) FILTER (WHERE NOT passes))::integer     AS rows_dropped,
@@ -206,6 +219,7 @@
              COALESCE(SUM(count_n) FILTER (WHERE passes), 0)       AS count_kept,
              COALESCE(SUM(count_n) FILTER (WHERE NOT passes), 0)   AS count_dropped,
              (SELECT weight_mt FROM source)                        AS weight_source,
-             (SELECT count_n FROM source)                          AS count_source
+             (SELECT count_n FROM source)                          AS count_source,
+             (SELECT disclosable FROM dropped)                     AS dropped_disclosable
       FROM groups;
 

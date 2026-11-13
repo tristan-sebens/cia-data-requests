@@ -8,10 +8,13 @@ Description: A local Shiny app that turns data request specifications
     results as a GeoPackage for delivery.
 License: file LICENSE
 Encoding: UTF-8
+Depends:
+    R (>= 4.1)
 Imports:
     DBI,
     digest,
     jsonlite,
+    processx,
     RPostgres,
     RSQLite,
     sf,
