@@ -1,0 +1,15 @@
+# Confidentiality rules. Every rule is applied to every dataset; a group is
+# delivered only if it satisfies all of them. There is no way to disable a rule
+# from a dataset spec.
+#
+# type: min_distinct -> COUNT(DISTINCT <column>) >= <min>
+#   column: a column of the hauls table
+#   filter (optional): only count rows matching {column, op: in|not_in, values}
+#     e.g. to stop area hauls counting toward the vessel total:
+#     filter: {column: haul_type, op: not_in, values: [AREA]}
+
+- name: min_vessels
+  type: min_distinct
+  column: vessel_id
+  min: 3
+  description: "Each record aggregates catch from at least 3 distinct vessels."

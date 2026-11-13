@@ -10,9 +10,14 @@ License: file LICENSE
 Encoding: UTF-8
 Imports:
     DBI,
+    digest,
+    jsonlite,
     RPostgres,
-    shiny
+    shiny,
+    utils,
+    yaml
 Suggests:
+    sf,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

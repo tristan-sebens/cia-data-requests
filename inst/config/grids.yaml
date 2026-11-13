@@ -1,0 +1,22 @@
+# Grid registry. Any table with a cell id column and a polygon column in
+# EPSG:3338 can be registered here; queries rename them to grid_id / grid_shape.
+#
+# allocation_table (optional): a precomputed table with columns
+# (haul_id, grid_id, p) giving each haul's renormalised share in each cell.
+# When set, it replaces the on-the-fly spatial overlay.
+
+hex_8km:
+  label: "Hexagonal grid, 8 km"
+  schema: data
+  table: hex_8km
+  id: hexid
+  geom: shape
+  srid: 3338
+
+hex_20km:
+  label: "Hexagonal grid, 20 km"
+  schema: data
+  table: hex_20km
+  id: hexid
+  geom: shape
+  srid: 3338

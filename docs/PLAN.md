@@ -53,8 +53,9 @@ hauls ── haul-level filters
   so any grid with an id and polygon column works.
 - Filters: AND across fields; within a field, any of the selected values
   (`IN (...)`); `year` is a range. Empty filter = no restriction.
-- A vessel counts toward every cell its haul polygon touches (including area
-  hauls). This satisfies current policy; a future change (e.g. ignore area
+- A vessel counts toward every cell its haul polygon overlaps with positive
+  area (including area hauls); cells that merely touch a haul's edge are
+  excluded. This satisfies current policy; a future change (e.g. ignore area
   hauls when counting) is a one-line rule change because `haul_type` is
   available.
 - The vessel count is used only in `HAVING`; it is never in the output.
@@ -89,8 +90,14 @@ Config files (`inst/config/`, no secrets):
   (which fields are filterable/groupable, which table they live on, set vs range).
 - `grids.yaml` — grid registry: table, id column, geometry column, SRID,
   optional precomputed allocation table.
-- `rules.yaml` — confidentiality rules as `HAVING` expressions with
-  human-readable descriptions (also written into the README).
+- `rules.yaml` — confidentiality rules, structured rather than raw SQL
+  (`type: min_distinct`, `column`, `min`, optional `filter` such as
+  `{column: haul_type, op: not_in, values: [AREA]}`), with human-readable
+  descriptions (also written into the SQL header and README).
+
+All configured identifiers are validated as plain lowercase SQL names so they
+can be written unquoted (readable SQL); filter values are always quoted as
+literals.
 
 ## Storage
 
@@ -130,7 +137,9 @@ run_datasets  run_id, dataset_id, sql_text, duration_s,
 
 - Specs are validated against the config (fields, values, grid).
 - **Package is enabled only after a successful preview of the exact current
-  specs** (spec hash recorded on approval; any edit invalidates it).
+  specs.** Approval records a hash of the generated deliver SQL (not just the
+  spec), so a change to the spec, the config or the query template all
+  invalidate it.
 - The query builder always appends the rules; specs have no way to disable them.
 
 ## App flow
@@ -182,7 +191,7 @@ threshold, and a generated hex grid in EPSG:3338.
 ## Build order
 
 1. ~~Repo scaffold, Docker/compose, `.env.example`, synthetic PostGIS seed, CI.~~ Done.
-2. Config + spec + SQL builder, with conservation and gate tests.
+2. ~~Config + spec + SQL builder, with conservation and gate tests.~~ Done.
 3. Execution + suppression stats.
 4. SQLite store.
 5. Packager, README, rclone upload — full pipeline usable from the R console.

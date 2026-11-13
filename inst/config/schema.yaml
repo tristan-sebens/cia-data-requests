@@ -1,0 +1,30 @@
+# Physical table and column names in the CIA database, and the catalogue of
+# fields that can be filtered on or grouped by.
+#
+# The schema holding these tables comes from the CIA_PG_SCHEMA environment
+# variable (default "data"). Identifiers must be plain lowercase names.
+
+hauls:
+  table: hauls
+  key: haul_id
+  vessel: vessel_id
+  geom: haul_polygon
+  haul_type: haul_type
+
+haul_catch:
+  table: haul_catch
+  key: haul_id
+  weight: weight     # metric tons
+  count: count
+
+# kind: set   -> filter is "any of these values" (IN), values are text
+# kind: range -> filter is an inclusive min/max, values are integers
+fields:
+  year:                    {table: hauls,      kind: range}
+  gear_code:               {table: hauls,      kind: set}
+  management_program_code: {table: hauls,      kind: set}
+  trip_target_code:        {table: hauls,      kind: set}
+  harvest_sector:          {table: hauls,      kind: set}
+  processing_sector:       {table: hauls,      kind: set}
+  species_code:            {table: haul_catch, kind: set}
+  species_group_code:      {table: haul_catch, kind: set}
