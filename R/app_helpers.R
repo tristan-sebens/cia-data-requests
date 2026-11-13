@@ -168,6 +168,48 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity, sf_ro
   )
 }
 
+#' Popup showing a dataset's SQL, generated from its current definition
+#'
+#' Both queries a preview runs: the deliver query (exported, written to the
+#' .sql file) and the diagnostic query (suppression summary). Each has a copy
+#' button, e.g. for running EXPLAIN in the database.
+#' @param sqls Named list with `deliver` and `diagnostic`.
+#' @noRd
+sql_modal <- function(name, sqls) {
+  block <- function(key, sql) {
+    id <- paste0("sql_text_", key)
+    htmltools::tagList(
+      htmltools::div(
+        class = "d-flex justify-content-end my-2",
+        htmltools::tags$button(
+          type = "button", class = "btn btn-sm btn-outline-primary",
+          onclick = sprintf(paste0(
+            "var b = this, t = document.getElementById('%s').textContent;",
+            "navigator.clipboard.writeText(t).then(function () {",
+            " b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); },",
+            " function () { var r = document.createRange();",
+            " r.selectNodeContents(document.getElementById('%s'));",
+            " var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);",
+            " b.textContent = 'Press Ctrl+C'; });"), id, id),
+          "Copy")
+      ),
+      htmltools::tags$pre(id = id, class = "sql", style = "max-height: 60vh;", sql)
+    )
+  }
+  shiny::modalDialog(
+    title = htmltools::tagList("SQL for ", htmltools::tags$code(name)),
+    size = "xl", easyClose = TRUE,
+    htmltools::p(class = "small text-muted",
+      "Generated from the dataset's current definition; nothing has been run. ",
+      "A preview runs both queries."),
+    bslib::navset_tab(
+      bslib::nav_panel("Deliver query", block("deliver", sqls$deliver)),
+      bslib::nav_panel("Diagnostic query", block("diagnostic", sqls$diagnostic))
+    ),
+    footer = shiny::modalButton("Close")
+  )
+}
+
 #' Suppression statistics as a small HTML table
 #'
 #' Measures as columns, delivered / withheld / total / % as rows, so it fits

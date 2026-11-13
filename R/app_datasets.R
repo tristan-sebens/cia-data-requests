@@ -30,6 +30,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
         htmltools::tags$td(
           class = "text-nowrap",
           act("edit", d$id[i], "Edit"),
+          act("sql", d$id[i], "SQL"),
           act("duplicate", d$id[i], "Duplicate"),
           act("up", d$id[i], "↑", disabled = i == 1),
           act("down", d$id[i], "↓", disabled = i == nrow(d)),
@@ -150,6 +151,11 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     d <- datasets()
     if (a$action == "edit") {
       open_editor(get_dataset(store, id)$spec, id, "Edit dataset")
+    } else if (a$action == "sql") {
+      ds <- get_dataset(store, id)
+      sqls <- list(deliver = build_sql(ds$spec, cfg, "deliver"),
+                   diagnostic = build_sql(ds$spec, cfg, "diagnostic"))
+      shiny::showModal(sql_modal(ds$name, sqls))
     } else if (a$action == "duplicate") {
       spec <- get_dataset(store, id)$spec
       base <- substr(paste0(spec$name, "_copy"), 1, 55)
