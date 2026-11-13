@@ -11,7 +11,7 @@
 
 view:
   schema: data
-  table: spatial_areas
+  table: management_areas
   source: source       # text: which set of areas, e.g. NMFS_REPORTING_AREA
   code: area_code      # the area's code within its source (int or text)
   geom: shape          # Polygon/MultiPolygon, EPSG:3338
