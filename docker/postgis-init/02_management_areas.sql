@@ -1,5 +1,5 @@
 -- Synthetic spatial filter areas, mirroring the production dbt model
--- (data.spatial_areas: source, area_code, shape). Contains NO real data.
+-- (data.management_areas: source, area_code, shape). Contains NO real data.
 --
 --   * NMFS reporting areas: four 100 km wide strips (610, 620, 630, 640)
 --     across the fishing region. Their boundaries fall on stat-area edges, so
@@ -30,7 +30,7 @@ CREATE INDEX adfg_stat_areas_gix ON data.adfg_stat_areas USING gist (shape);
 
 -- Same shape as the production model (UNION ALL, constant source per branch),
 -- without the row_number() area_id, which the app does not use.
-CREATE VIEW data.spatial_areas AS
+CREATE VIEW data.management_areas AS
 SELECT 'ADFG_STAT_AREA' AS source, code::int AS area_code, shape
 FROM data.adfg_stat_areas WHERE end_date IS NULL
 UNION ALL

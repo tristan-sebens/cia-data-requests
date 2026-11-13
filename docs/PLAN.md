@@ -253,7 +253,7 @@ threshold, and a generated hex grid in EPSG:3338.
 Requests often limit a dataset to (or, rarely, exclude) one or more
 management areas.
 
-- **One areas view** (`data.spatial_areas`, a dbt model maintained outside
+- **One areas view** (`data.management_areas`, a dbt model maintained outside
   this repo) unions every area source: `source`, `area_code`, `shape`
   (EPSG:3338). Business rules live in the view (e.g. only current ADF&G stat
   area definitions). The app reads only those three columns, configured in

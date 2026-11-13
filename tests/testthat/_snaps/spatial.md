@@ -37,7 +37,7 @@
                  h.haul_type
           FROM data.hauls h
           WHERE (EXISTS (  -- include hauls overlapping NMFS reporting area 610 or 620
-                SELECT 1 FROM data.spatial_areas sa
+                SELECT 1 FROM data.management_areas sa
                 WHERE sa.source = 'NMFS_REPORTING_AREA'
                   AND sa.area_code::text IN ('610', '620')
                   AND ST_Intersects(sa.shape, h.haul_polygon)

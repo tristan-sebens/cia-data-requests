@@ -1,5 +1,5 @@
 # Spatial filters: spec handling, SQL and results against the synthetic
-# areas view (docker/postgis-init/02_spatial_areas.sql).
+# areas view (docker/postgis-init/02_management_areas.sql).
 
 nmfs <- function(mode, codes) list(mode = mode, source = "NMFS_REPORTING_AREA", codes = codes)
 

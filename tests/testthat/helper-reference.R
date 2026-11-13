@@ -51,7 +51,7 @@ ref_apply_filters <- function(df, filters, fields) {
 ref_spatial_filter <- function(con, hauls, spatial_filters) {
   for (s in spatial_filters) {
     areas <- sf::st_read(con, quiet = TRUE, query = sprintf(
-      "SELECT shape FROM data.spatial_areas WHERE source = '%s' AND area_code::text IN (%s)",
+      "SELECT shape FROM data.management_areas WHERE source = '%s' AND area_code::text IN (%s)",
       s$source, paste0("'", s$codes, "'", collapse = ", ")))
     hit <- lengths(sf::st_relate(hauls, areas, pattern = "T********")) > 0
     hauls <- hauls[if (s$mode == "include") hit else !hit, ]
