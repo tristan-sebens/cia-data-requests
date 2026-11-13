@@ -5,14 +5,14 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
                         refresh, guarded, job_running) {
 
   # Background job polling ----------------------------------------------------
-  start <- function(kind, id) {
+  start <- function(kind, id) guarded(paste("Start", kind, "job for", id), {
     if (job_running()) {
       shiny::showNotification("Another job is still running.", type = "warning")
       return()
     }
     state$job <- start_job(kind, id)
     state$job_log <- character()
-  }
+  })
 
   shiny::observe({
     job <- state$job
@@ -22,6 +22,8 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
     state$job_log <- p$log
     if (!p$done) return()
     state$job <- NULL
+    if (!is.null(p$error)) log_error(job$kind, " job for ", job$id, " failed: ", p$error)
+    else log_info(job$kind, " job for ", job$id, " finished: ", p$result$status %||% "done")
     if (!is.null(p$error)) {
       shiny::showNotification(paste(tools::toTitleCase(job$kind), "failed:", p$error),
                               type = "error", duration = NULL)
@@ -81,7 +83,7 @@ runs_server <- function(input, output, session, cfg, store, state, datasets, app
 
   shiny::observeEvent(input$preview_run, start("preview", state$request_id))
 
-  shiny::observeEvent(input$preview_approve, guarded({
+  shiny::observeEvent(input$preview_approve, guarded(paste("Approve preview run", state$preview$run_id), {
     approve_run(store, state$preview$run_id, cfg)
     shiny::showNotification("Approved. The request can now be packaged.", type = "message")
     refresh()

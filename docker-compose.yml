@@ -71,6 +71,7 @@ services:
         condition: service_healthy
     environment:
       <<: *synthetic-db
+      CIA_LOG_LEVEL: "OFF"
     volumes:
       - ./:/app
     command: ["Rscript", "-e", "testthat::test_local('/app', stop_on_failure = TRUE)"]
@@ -89,6 +90,7 @@ services:
       CIA_OUTPUT_DIR: /data/outputs
       CIA_DEV_PKG: /app               # background jobs load the package from source
       CIA_RCLONE_REMOTE: /data/drive  # "uploads" go to a local folder, not Google Drive
+      CIA_LOG_LEVEL: DEBUG
     volumes:
       - ./:/app
       - dev-data:/data

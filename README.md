@@ -28,6 +28,27 @@ Docker Desktop (WSL2 backend on Windows).
 
 3. Open <http://127.0.0.1:3838>.
 
+## Logs and troubleshooting
+
+The app logs every action, database query and background job, with timings, to
+the console:
+
+```bash
+docker compose logs -f app
+```
+
+Each line is tagged with the browser session (`[session 1a2b3c]`) or the
+background job (`[job preview 12]`) it came from. Anything slower than expected
+is logged as `WARN ... (slow)`. For more detail (every read of the request
+store, and call stacks for errors), set `CIA_LOG_LEVEL=DEBUG` in `.env` and
+restart with `docker compose up -d app`. Logs contain names, ids, counts and
+timings only, never catch data or passwords.
+
+At start-up the log shows the settings in use and checks the request store
+and the Postgres connection. Filter values for the dataset editor are loaded
+from Postgres the first time the editor is opened after start-up (this can
+take a while on the full tables) and then kept until the app restarts.
+
 ## Workflow
 
 1. **New request**: title, requester, and the Drive folder (create and share

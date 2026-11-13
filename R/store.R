@@ -19,6 +19,7 @@ store_connect <- function(path = Sys.getenv("CIA_REQUESTS_DB")) {
     stop("No request store path: set CIA_REQUESTS_DB. See .env.example.", call. = FALSE)
   }
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  t0 <- Sys.time()
   store <- DBI::dbConnect(RSQLite::SQLite(), path)
   # Rollback journal, not WAL: WAL's shared-memory file is unreliable on
   # Docker Desktop's Windows bind mounts.
@@ -28,9 +29,11 @@ store_connect <- function(path = Sys.getenv("CIA_REQUESTS_DB")) {
     DBI::dbExecute(store, "PRAGMA busy_timeout = 10000")
     store_migrate(store)
   }, error = function(e) {
+    log_error("Could not open the request store at ", path, ": ", conditionMessage(e))
     DBI::dbDisconnect(store)
     stop(e)
   })
+  log_debug("Opened request store ", path, " in ", fmt_ms(t0))
   store
 }
 

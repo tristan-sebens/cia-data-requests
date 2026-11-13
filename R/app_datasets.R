@@ -45,7 +45,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
         class = "d-flex justify-content-between align-items-center mb-2",
         htmltools::p(class = "text-muted mb-0",
                      "Each dataset becomes one layer in the GeoPackage. Editing a dataset withdraws its approval."),
-        shiny::actionButton("ds_add", "Add dataset", class = "btn-primary")
+        bslib::input_task_button("ds_add", "Add dataset", label_busy = "Loading filter values ...")
       ),
       if (!nrow(d)) htmltools::p(class = "mt-3", "No datasets yet.") else
         htmltools::tags$table(
@@ -57,33 +57,23 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     )
   })
 
-  # Values for the filter pickers, loaded from the database once per session.
-  load_choices <- function() {
-    if (is.null(state$choices)) {
-      con <- db()
-      state$choices <- stats::setNames(lapply(names(cfg$fields), function(f) field_values(con, cfg, f)),
-                                       names(cfg$fields))
-    }
-    state$choices
-  }
-
+  # Values for the filter pickers: loaded from the database on first use, then
+  # cached for the life of the app process (see filter_choices()).
   open_editor <- function(spec, dataset_id = NULL, title) {
-    choices <- tryCatch(load_choices(), error = function(e) {
-      shiny::showNotification(paste("Could not load filter values from the database:", conditionMessage(e)),
-                              type = "error", duration = 10)
-      NULL
+    choices <- tryCatch(filter_choices(db(), cfg), error = function(e) {
+      stop("Could not load filter values from the database: ", conditionMessage(e), call. = FALSE)
     })
-    if (is.null(choices)) return()
     state$editing <- list(dataset_id = dataset_id)
     shiny::showModal(dataset_editor_modal(spec, cfg, choices, title))
   }
 
-  shiny::observeEvent(input$ds_add, {
+  shiny::observeEvent(input$ds_add, guarded("Open dataset editor (new)", {
     n <- nrow(datasets())
     open_editor(dataset_spec(paste0("dataset_", n + 1), names(cfg$grids)[1]), NULL, "Add dataset")
-  })
+  }))
 
-  shiny::observeEvent(input$ds_action, guarded({
+  shiny::observeEvent(input$ds_action, guarded(
+    paste0("Dataset action '", input$ds_action$action, "' on dataset ", input$ds_action$id), {
     a <- input$ds_action
     id <- a$id
     d <- datasets()
@@ -117,7 +107,7 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     }
   }))
 
-  shiny::observeEvent(input$ds_delete_confirm, guarded({
+  shiny::observeEvent(input$ds_delete_confirm, guarded("Delete dataset", {
     shiny::removeModal()
     delete_dataset(store, state$editing$delete_id)
     state$editing <- NULL
@@ -130,10 +120,11 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
     if (!is.null(msg)) htmltools::div(class = "alert alert-danger mt-3 mb-0", msg)
   })
 
-  shiny::observeEvent(input$ed_save, {
-    spec <- spec_from_editor(function(n) input[[paste0("ed_", n)]], cfg)
+  shiny::observeEvent(input$ed_save, guarded("Save dataset", {
+    id <- state$editing$dataset_id
     res <- tryCatch({
-      id <- state$editing$dataset_id
+      spec <- spec_from_editor(function(n) input[[paste0("ed_", n)]], cfg)
+      log_debug("Dataset spec from editor: ", spec_to_json(spec))
       if (is.null(id)) {
         add_dataset(store, state$request_id, spec, cfg)
         "Dataset added."
@@ -144,13 +135,16 @@ datasets_server <- function(input, output, session, cfg, store, db, state, datas
       }
     }, error = function(e) e)
     if (inherits(res, "error")) {
+      # Usually invalid input; shown in the editor, which stays open.
+      log_warn("Save dataset rejected: ", conditionMessage(res))
       editor_error(conditionMessage(res))
       return()
     }
+    log_info(res, if (is.null(id)) "" else paste0(" (dataset ", id, ")"))
     editor_error(NULL)
     state$editing <- NULL
     shiny::removeModal()
     shiny::showNotification(res, type = "message")
     refresh()
-  })
+  }))
 }

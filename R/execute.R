@@ -22,8 +22,11 @@ run_dataset <- function(con, spec, cfg) {
   diag_sql <- build_sql(spec, cfg, "diagnostic")
 
   started <- Sys.time()
-  data <- read_deliver(con, sql, spec)
-  diag <- DBI::dbGetQuery(con, diag_sql)
+  data <- log_timed(paste0("Dataset '", spec$name, "': deliver query"), level = "INFO", slow_ms = Inf,
+                    read_deliver(con, sql, spec))
+  diag <- log_timed(paste0("Dataset '", spec$name, "': diagnostic query"), level = "INFO", slow_ms = Inf,
+                    DBI::dbGetQuery(con, diag_sql))
+  log_info("Dataset '", spec$name, "': ", nrow(data), " records delivered, ", diag$rows_dropped, " withheld")
   duration <- as.numeric(difftime(Sys.time(), started, units = "secs"))
 
   if (nrow(data) != diag$rows_kept) {
@@ -129,11 +132,14 @@ field_values <- function(con, cfg, field) {
   if (is.null(def)) stop("Unknown field '", field, "'", call. = FALSE)
   tbl <- paste0(cfg$schema, ".", cfg[[def$table]]$table)
   if (def$kind == "range") {
-    r <- DBI::dbGetQuery(con, paste0("SELECT MIN(", field, ") AS min, MAX(", field, ") AS max FROM ", tbl))
+    r <- log_timed(paste0("Load range of ", field, " from ", tbl), level = "INFO", slow_ms = 5000,
+                   DBI::dbGetQuery(con, paste0("SELECT MIN(", field, ") AS min, MAX(", field, ") AS max FROM ", tbl)))
     return(c(min = as.integer(r$min), max = as.integer(r$max)))
   }
-  v <- DBI::dbGetQuery(con, paste0(
-    "SELECT DISTINCT ", field, " AS v FROM ", tbl, " WHERE ", field, " IS NOT NULL ORDER BY 1"))$v
+  v <- log_timed(paste0("Load filter values for ", field, " from ", tbl), level = "INFO", slow_ms = 5000,
+    DBI::dbGetQuery(con, paste0(
+      "SELECT DISTINCT ", field, " AS v FROM ", tbl, " WHERE ", field, " IS NOT NULL ORDER BY 1"))$v)
+  log_debug(field, ": ", length(v), " distinct values")
   as.character(v)
 }
 
@@ -151,9 +157,9 @@ unknown_filter_values <- function(con, spec, cfg) {
     if (cfg$fields[[f]]$kind != "set") next
     v <- spec$filters[[f]]
     tbl <- paste0(cfg$schema, ".", cfg[[cfg$fields[[f]]$table]]$table)
-    found <- DBI::dbGetQuery(con, paste0(
+    found <- log_timed(paste0("Check filter values for ", f), DBI::dbGetQuery(con, paste0(
       "SELECT DISTINCT ", f, " AS v FROM ", tbl,
-      " WHERE ", f, " IN (", paste(sql_quote(v), collapse = ", "), ")"))$v
+      " WHERE ", f, " IN (", paste(sql_quote(v), collapse = ", "), ")")))$v
     missing <- setdiff(v, found)
     if (length(missing)) out <- rbind(out, data.frame(field = f, value = missing))
   }

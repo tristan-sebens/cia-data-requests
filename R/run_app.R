@@ -3,14 +3,66 @@
 #' @param host,port Passed to [shiny::runApp()].
 #' @export
 run_app <- function(host = "127.0.0.1", port = 3838) {
+  log_info("Starting cia-data-requests ", app_version(), " (log level ",
+           names(log_levels)[log_threshold()], "; set CIA_LOG_LEVEL=DEBUG for more detail)")
   cfg <- load_config()
-  store <- store_connect()
-  n <- recover_interrupted_runs(store)
-  if (n > 0) message("Marked ", n, " interrupted run(s) as failed.")
-  DBI::dbDisconnect(store)
+  log_info("Config: grids ", paste(names(cfg$grids), collapse = ", "), "; rules ",
+           paste(vapply(cfg$rules, function(r) r$name %||% r$type, ""), collapse = ", "))
+  startup_checks()
   app <- shiny::shinyApp(app_ui(cfg), function(input, output, session) app_server(input, output, session, cfg))
+  log_info("Open http://127.0.0.1:", port, " in a browser")
   shiny::runApp(app, host = host, port = port, launch.browser = FALSE)
 }
+
+#' Log the app's settings and check that its stores are reachable
+#'
+#' Only a broken request store stops the app; the database and rclone checks
+#' just warn, so the app can still be used to edit requests.
+#' @noRd
+startup_checks <- function() {
+  path <- Sys.getenv("CIA_REQUESTS_DB")
+  log_info("Request store: ", path)
+  store <- store_connect()
+  on.exit(DBI::dbDisconnect(store))
+  log_timed("Request store write check", level = "INFO", slow_ms = 500, {
+    DBI::dbExecute(store, "BEGIN IMMEDIATE")
+    DBI::dbExecute(store, "COMMIT")
+  })
+  n <- recover_interrupted_runs(store)
+  if (n > 0) log_warn("Marked ", n, " interrupted run(s) as failed.")
+
+  log_info("Output folder: ", Sys.getenv("CIA_OUTPUT_DIR"))
+  remote <- Sys.getenv("CIA_RCLONE_REMOTE")
+  if (nzchar(remote)) log_info("Upload root: ", remote) else log_warn("CIA_RCLONE_REMOTE is not set: uploads will fail.")
+  rc <- Sys.getenv("RCLONE_CONFIG")
+  if (nzchar(rc) && !grepl("^/", remote) && !file.exists(rc)) {
+    log_warn("No rclone config at ", rc, ": uploads will fail. See README (RCLONE_CONFIG_DIR).")
+  }
+
+  tryCatch({
+    con <- cia_connect()
+    on.exit(DBI::dbDisconnect(con), add = TRUE)
+    log_timed("Postgres check query", level = "INFO", DBI::dbGetQuery(con, "SELECT 1"))
+  }, error = function(e) {
+    log_warn("Postgres is not reachable: ", trimws(conditionMessage(e)),
+             ". The app will start, but previews and packaging will fail.")
+  })
+}
+
+#' Filter values per field, cached for the life of the app process
+#'
+#' Loading them runs `SELECT DISTINCT` over the full tables, which can be slow
+#' on the real database, so it happens once (on first use), not per session.
+#' Restart the app to pick up new codes.
+#' @noRd
+filter_choices <- function(con, cfg) {
+  if (is.null(.cia_cache$choices)) {
+    .cia_cache$choices <- log_timed("Load filter values (first use since start-up)", level = "INFO",
+      stats::setNames(lapply(names(cfg$fields), function(f) field_values(con, cfg, f)), names(cfg$fields)))
+  }
+  .cia_cache$choices
+}
+.cia_cache <- new.env(parent = emptyenv())
 
 #' @noRd
 app_ui <- function(cfg) {
@@ -25,12 +77,18 @@ app_ui <- function(cfg) {
       shiny::checkboxInput("show_archived", "Show archived requests"),
       shiny::uiOutput("request_list")
     ),
+    shiny::useBusyIndicators(spinners = TRUE, pulse = TRUE),
     htmltools::tags$head(htmltools::tags$style(htmltools::HTML("
       .req-item { cursor: pointer; }
       .req-item.active { background: var(--bs-primary); color: #fff; }
       .req-item.active .text-muted { color: #e9ecef !important; }
       pre.sql { max-height: 420px; overflow: auto; font-size: 0.8rem; background: var(--bs-light); padding: .75rem; }
       .job-log { font-size: 0.8rem; max-height: 220px; overflow: auto; }
+      /* Make multi-select filter fields look like dropdowns. */
+      .cia-picker .selectize-control.multi .selectize-input { padding-right: 2.25rem; cursor: pointer;
+        background-image: url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e\"); background-repeat: no-repeat;
+        background-position: right .75rem center; background-size: 16px 12px; }
+      .cia-picker .selectize-control.multi .selectize-input > input { cursor: pointer; }
     "))),
     shiny::conditionalPanel(
       "!output.has_request",
@@ -71,7 +129,7 @@ details_panel <- function() {
         if (nzchar(root)) htmltools::tagList(" (", htmltools::tags$code(root), ")"),
         ". Create it in Drive and share it with the recipient before packaging."),
       shiny::textAreaInput("req_notes", "Notes (internal)", rows = 4, width = "100%"),
-      shiny::actionButton("req_save", "Save details", class = "btn-primary"),
+      bslib::input_task_button("req_save", "Save details", label_busy = "Saving ..."),
       shiny::actionButton("req_archive", "Archive", class = "btn-outline-secondary ms-2"),
       shiny::actionButton("req_delete", "Delete", class = "btn-outline-danger ms-2")
     )
@@ -80,51 +138,74 @@ details_panel <- function() {
 
 #' @noRd
 app_server <- function(input, output, session, cfg) {
-  store <- store_connect()
-  db <- local({
-    con <- NULL
-    function() {
-      if (is.null(con) || !DBI::dbIsValid(con)) con <<- cia_connect()
-      con
-    }
-  })
+  sid <- paste0("session ", substr(session$token, 1, 6))
+  with_log_context(sid, log_info("Session started (", session$request$HTTP_USER_AGENT %||% "unknown browser", ")"))
+  store <- with_log_context(sid, store_connect())
+  pg <- NULL  # opened on first use
+  db <- function() {
+    if (is.null(pg) || !DBI::dbIsValid(pg)) pg <<- cia_connect()
+    pg
+  }
   session$onSessionEnded(function() {
+    with_log_context(sid, log_info("Session ended"))
     DBI::dbDisconnect(store)
-    try(DBI::dbDisconnect(db()), silent = TRUE)
+    if (!is.null(pg)) try(DBI::dbDisconnect(pg), silent = TRUE)
   })
 
   state <- shiny::reactiveValues(
     request_id = NULL, tick = 0, job = NULL, job_log = character(),
-    preview = NULL, editing = NULL, choices = NULL
+    preview = NULL, editing = NULL
   )
   refresh <- function() state$tick <- state$tick + 1
   notify_error <- function(e) shiny::showNotification(conditionMessage(e), type = "error", duration = 8)
-  guarded <- function(expr) tryCatch(expr, error = notify_error)
+
+  # Run a user action: log it, time it, and show any error instead of crashing
+  # the session. `expr` is evaluated lazily inside the handler.
+  guarded <- function(label, expr) with_log_context(sid, {
+    t0 <- Sys.time()
+    log_info(label, " ...")
+    trace <- NULL
+    tryCatch(
+      withCallingHandlers({
+        force(expr)
+        log_info(label, " done in ", fmt_ms(t0))
+      }, error = function(e) trace <<- short_trace()),
+      shiny.silent.error = function(e) log_debug(label, ": skipped (nothing selected)"),
+      error = function(e) {
+        log_error(label, " failed after ", fmt_ms(t0), ": ", trimws(conditionMessage(e)))
+        if (length(trace)) log_debug("Call stack:\n  ", paste(trace, collapse = "\n  "))
+        notify_error(e)
+      }
+    )
+    invisible()
+  })
+  # Time a read of the request store (logged at DEBUG; WARN when slow).
+  timed <- function(label, expr) with_log_context(sid, log_timed(label, expr, slow_ms = 500))
 
   # Reactive reads of the store ------------------------------------------------
   requests <- shiny::reactive({
     state$tick
-    list_requests(store, include_archived = isTRUE(input$show_archived))
+    timed("Store read: requests", list_requests(store, include_archived = isTRUE(input$show_archived)))
   })
   request <- shiny::reactive({
     state$tick
     shiny::req(state$request_id)
-    get_request(store, state$request_id)
+    timed("Store read: request", get_request(store, state$request_id))
   })
   datasets <- shiny::reactive({
     state$tick
     shiny::req(state$request_id)
-    get_datasets(store, state$request_id)
+    timed("Store read: datasets", get_datasets(store, state$request_id))
   })
   approvals <- shiny::reactive({
     state$tick
     shiny::req(state$request_id)
-    approval_status(store, state$request_id, cfg)
+    timed("Store read: approvals", approval_status(store, state$request_id, cfg))
   })
   runs <- shiny::reactive({
     state$tick
     shiny::req(state$request_id)
-    list_runs(store, state$request_id)
+    timed("Store read: runs", list_runs(store, state$request_id))
   })
   job_running <- shiny::reactive(!is.null(state$job))
 
@@ -168,20 +249,20 @@ app_server <- function(input, output, session, cfg) {
     shiny::updateTextAreaInput(session, "req_notes", value = r$notes)
     shiny::updateActionButton(session, "req_archive", label = if (r$archived) "Unarchive" else "Archive")
   }
-  shiny::observeEvent(input$select_request, guarded(select_request(input$select_request)))
+  shiny::observeEvent(input$select_request, guarded(paste("Open request", input$select_request), select_request(input$select_request)))
 
   # New request ----------------------------------------------------------------
-  shiny::observeEvent(input$new_request, {
+  shiny::observeEvent(input$new_request, guarded("New request form", {
     shiny::showModal(shiny::modalDialog(
       title = "New request",
       shiny::textInput("new_title", "Title", width = "100%", placeholder = "e.g. Pollock catch for Org X"),
       shiny::textInput("new_requester", "Requester (organisation)", width = "100%"),
       shiny::textInput("new_drive", "Drive folder", width = "100%"),
       footer = htmltools::tagList(shiny::modalButton("Cancel"),
-                                  shiny::actionButton("new_create", "Create", class = "btn-primary"))
+                                  bslib::input_task_button("new_create", "Create", label_busy = "Creating ..."))
     ))
-  })
-  shiny::observeEvent(input$new_create, guarded({
+  }))
+  shiny::observeEvent(input$new_create, guarded("Create request", {
     id <- create_request(store, input$new_title, input$new_requester,
                          drive_path = trimws(input$new_drive))
     shiny::removeModal()
@@ -210,7 +291,7 @@ app_server <- function(input, output, session, cfg) {
   })
 
   # Details ----------------------------------------------------------------------
-  shiny::observeEvent(input$req_save, guarded({
+  shiny::observeEvent(input$req_save, guarded(paste("Save request", state$request_id), {
     update_request(store, state$request_id, title = input$req_title, requester = input$req_requester,
                    contact = input$req_contact, drive_path = trimws(input$req_drive),
                    notes = input$req_notes)
@@ -218,7 +299,7 @@ app_server <- function(input, output, session, cfg) {
     shiny::showNotification("Request saved.", type = "message")
     refresh()
   }))
-  shiny::observeEvent(input$req_archive, guarded({
+  shiny::observeEvent(input$req_archive, guarded(paste("Archive/unarchive request", state$request_id), {
     archived <- !isTRUE(request()$archived)
     update_request(store, state$request_id, archived = archived)
     shiny::updateActionButton(session, "req_archive", label = if (archived) "Unarchive" else "Archive")
@@ -233,7 +314,7 @@ app_server <- function(input, output, session, cfg) {
                                   shiny::actionButton("req_delete_confirm", "Delete", class = "btn-danger"))
     ))
   })
-  shiny::observeEvent(input$req_delete_confirm, guarded({
+  shiny::observeEvent(input$req_delete_confirm, guarded(paste("Delete request", state$request_id), {
     shiny::removeModal()
     delete_request(store, state$request_id)
     state$request_id <- NULL

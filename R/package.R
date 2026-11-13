@@ -51,8 +51,9 @@ package_request <- function(store, con, request_id, cfg, uploader = rclone_uploa
       results[[spec$name]] <- r
 
       say("write", spec$name)
-      sf::st_write(r$data, file.path(staging_dir, gpkg_file), layer = spec$name,
-                   driver = "GPKG", quiet = TRUE)
+      log_timed(paste0("Write layer '", spec$name, "' (", nrow(r$data), " records)"), level = "INFO",
+        sf::st_write(r$data, file.path(staging_dir, gpkg_file), layer = spec$name,
+                   driver = "GPKG", quiet = TRUE))
       sql_file <- sprintf("%02d_%s.sql", i, spec$name)
       cat(r$sql, file = file.path(staging_dir, sql_file), sep = "")
       entries[[i]] <- list(spec = r$spec, stats = r$stats, sql_file = sql_file)

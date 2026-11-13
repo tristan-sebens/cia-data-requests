@@ -41,9 +41,21 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
   field_inputs <- lapply(names(cfg$fields), function(f) {
     def <- cfg$fields[[f]]
     if (def$kind == "set") {
-      shiny::selectizeInput(ns(paste0("ed_f_", f)), f, choices = choices[[f]],
-                            selected = spec$filters[[f]], multiple = TRUE, width = "100%",
-                            options = list(placeholder = "any"))
+      n <- length(choices[[f]])
+      htmltools::div(
+        class = "cia-picker",
+        shiny::selectizeInput(
+          ns(paste0("ed_f_", f)), f, choices = choices[[f]],
+          selected = spec$filters[[f]], multiple = TRUE, width = "100%",
+          options = list(
+            placeholder = sprintf("any (click to choose from %s value%s, or type to search)",
+                                  fmt_n(n), if (n == 1) "" else "s"),
+            plugins = list("remove_button"),
+            maxOptions = max(n, 1),
+            closeAfterSelect = FALSE
+          )
+        )
+      )
     } else {
       r <- choices[[f]]
       htmltools::div(
@@ -70,10 +82,11 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
         shiny::textAreaInput(ns("ed_description"), "Description (shown in the README)",
                              spec$description, rows = 2, width = "100%"),
         shiny::selectInput(ns("ed_grid"), "Grid", grid_choices, selected = spec$grid, width = "100%"),
-        shiny::selectizeInput(ns("ed_group_by"), "Group by (in addition to the grid cell)",
-                              choices = names(cfg$fields), selected = spec$group_by,
-                              multiple = TRUE, width = "100%",
-                              options = list(placeholder = "grid cell only")),
+        htmltools::div(class = "cia-picker", shiny::selectizeInput(
+          ns("ed_group_by"), "Group by (in addition to the grid cell)",
+          choices = names(cfg$fields), selected = spec$group_by, multiple = TRUE, width = "100%",
+          options = list(placeholder = "grid cell only (click to add fields)",
+                         plugins = list("remove_button")))),
         htmltools::tags$small(class = "text-muted",
                               "Columns appear in the order selected.")
       ),
@@ -87,7 +100,7 @@ dataset_editor_modal <- function(spec, cfg, choices, title, ns = identity) {
     shiny::uiOutput(ns("ed_error")),
     footer = htmltools::tagList(
       shiny::modalButton("Cancel"),
-      shiny::actionButton(ns("ed_save"), "Save dataset", class = "btn-primary")
+      bslib::input_task_button(ns("ed_save"), "Save dataset", label_busy = "Saving ...")
     )
   )
 }

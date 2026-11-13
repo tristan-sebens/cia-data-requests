@@ -18,12 +18,17 @@ rclone_uploader <- function(remote_root = Sys.getenv("CIA_RCLONE_REMOTE"), rclon
     stop("No upload destination: set CIA_RCLONE_REMOTE (e.g. 'gdrive:Data Requests').", call. = FALSE)
   }
   run <- function(cmd_args) {
+    t0 <- Sys.time()
+    log_info("rclone ", paste(shQuote(cmd_args), collapse = " "))
     res <- tryCatch(
       processx::run(rclone, c(cmd_args, args), error_on_status = FALSE, timeout = 3600),
       error = function(e) list(status = -1, stdout = "", stderr = conditionMessage(e))
     )
-    list(ok = identical(as.integer(res$status), 0L),
-         log = trimws(paste(res$stdout, res$stderr, sep = "\n")))
+    ok <- identical(as.integer(res$status), 0L)
+    out <- trimws(paste(res$stdout, res$stderr, sep = "\n"))
+    if (ok) log_info("rclone ", cmd_args[[1]], " finished in ", fmt_ms(t0))
+    else log_error("rclone ", cmd_args[[1]], " failed (exit ", res$status, ") after ", fmt_ms(t0), ":\n", out)
+    list(ok = ok, log = out)
   }
   structure(list(
     name = "rclone",

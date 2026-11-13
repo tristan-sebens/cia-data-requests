@@ -16,8 +16,14 @@ start_job <- function(kind, id) {
     args = list(kind = kind, id = id, log_file = log_file,
                 dev_pkg = Sys.getenv("CIA_DEV_PKG")),
     supervise = TRUE,
-    package = FALSE
+    package = FALSE,
+    # Inherit the app's stdout/stderr so job logging shows in the console.
+    # (Unread pipes would also block the job once their buffer filled.)
+    stdout = "", stderr = "",
+    env = c(callr::rcmd_safe_env(), CIA_LOG_CONTEXT = sprintf("job %s %s", kind, id))
   )
+  log_info("Started background ", kind, " job for ", if (kind == "upload") "run " else "request ", id,
+           " (pid ", proc$get_pid(), ")")
   list(proc = proc, kind = kind, id = id, log_file = log_file, started = Sys.time())
 }
 
@@ -28,10 +34,20 @@ job_main <- function(kind, id, log_file, dev_pkg) {
   if (nzchar(dev_pkg)) pkgload::load_all(dev_pkg, quiet = TRUE, export_all = FALSE)
   else library(ciarequests)
   ns <- asNamespace("ciarequests")
+  options(cia.log_context = Sys.getenv("CIA_LOG_CONTEXT", paste("job", kind, id)))
   say <- function(...) {
     cat(format(Sys.time(), "%H:%M:%S"), " ", paste0(...), "\n", sep = "", file = log_file, append = TRUE)
+    ns$log_info(...)
   }
+  t0 <- Sys.time()
+  on.exit(ns$log_info("Job finished after ", ns$fmt_ms(t0)), add = TRUE)
+  withCallingHandlers(ns$job_body(ns, kind, id, say), error = function(e) {
+    say("ERROR: ", conditionMessage(e))
+  })
+}
 
+#' @noRd
+job_body <- function(ns, kind, id, say) {
   cfg <- ns$load_config()
   store <- ns$store_connect()
   on.exit(DBI::dbDisconnect(store), add = TRUE)
