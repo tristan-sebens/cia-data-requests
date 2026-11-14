@@ -266,18 +266,24 @@ dataset_map <- function(data, areas = NULL) {
 
   if (nrow(data)) {
     # Aggregate over the grouping fields so each cell is drawn once.
-    totals <- tapply(data$catch_weight_mt, data$grid_id, sum)
     cells <- data[!duplicated(data$grid_id), "grid_id"]
-    cells$catch_weight_mt <- as.numeric(totals[as.character(cells$grid_id)])
+    sum_by <- function(x) as.numeric(tapply(x, data$grid_id, sum, na.rm = TRUE)[as.character(cells$grid_id)])
+    cells$catch_weight_mt <- sum_by(data$catch_weight_mt)
+    cells$catch_count <- sum_by(data$catch_count)
     cells <- sf::st_shift_longitude(sf::st_transform(cells, 4326))  # keep the Aleutians together
-    pal <- leaflet::colorNumeric("viridis", domain = sqrt(cells$catch_weight_mt))
-    m <- leaflet::addLegend(m, "bottomright", pal = pal, values = sqrt(cells$catch_weight_mt),
-                            title = "Catch (t)", opacity = 0.8,
-                            labFormat = leaflet::labelFormat(transform = function(x) round(x^2)))
+    shade <- map_shading(cells)
+    fill <- "#3b528b"
+    if (!is.null(shade)) {
+      pal <- leaflet::colorNumeric("viridis", domain = sqrt(shade$values), na.color = "#bbbbbb")
+      fill <- pal(sqrt(shade$values))
+      m <- leaflet::addLegend(m, "bottomright", pal = pal, values = sqrt(shade$values),
+                              title = shade$title, opacity = 0.8, na.label = "none",
+                              labFormat = leaflet::labelFormat(transform = function(x) round(x^2)))
+    }
     m <- leaflet::addPolygons(
-      m, data = cells, weight = 0.5, color = "#333", fillOpacity = 0.7,
-      fillColor = pal(sqrt(cells$catch_weight_mt)),
-      label = sprintf("Cell %s: %s t (all groups)", cells$grid_id, fmt_n(cells$catch_weight_mt, 1))
+      m, data = cells, weight = 0.5, color = "#333", fillOpacity = 0.7, fillColor = fill,
+      label = sprintf("Cell %s: %s t, %s fish (all groups)", cells$grid_id,
+                      fmt_n(cells$catch_weight_mt, 1), fmt_n(cells$catch_count, 0))
     )
   }
 
@@ -298,6 +304,22 @@ dataset_map <- function(data, areas = NULL) {
   if (is.null(extent)) return(leaflet::setView(m, lng = -160, lat = 58, zoom = 3))
   bb <- sf::st_bbox(extent)
   leaflet::fitBounds(m, bb[["xmin"]], bb[["ymin"]], bb[["xmax"]], bb[["ymax"]])
+}
+
+#' What to shade the map cells by
+#'
+#' Catch weight where any cell has a positive weight, otherwise catch count
+#' (count-only catch has no weight), otherwise nothing (`NULL`: plain fill).
+#' Non-positive values are left unshaded, so they cannot break the scale.
+#' @noRd
+map_shading <- function(cells) {
+  for (m in list(list(col = "catch_weight_mt", title = "Catch (t)"),
+                 list(col = "catch_count", title = "Catch (count)"))) {
+    v <- cells[[m$col]]
+    v[!is.finite(v) | v <= 0] <- NA
+    if (any(!is.na(v))) return(list(values = v, title = m$title))
+  }
+  NULL
 }
 
 #' Bootstrap badge

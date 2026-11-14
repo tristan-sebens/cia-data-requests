@@ -45,6 +45,21 @@ test_that("maps render for empty and non-empty data", {
   expect_s3_class(dataset_map(r$data[0, ]), "leaflet")
 })
 
+test_that("maps render when no cell has a usable weight", {
+  cells <- sf::st_sf(grid_id = 1:3, geometry = sf::st_sfc(
+    lapply(0:2, function(i) sf::st_polygon(list(rbind(c(i, 0), c(i + 1, 0), c(i + 1, 1), c(i, 1), c(i, 0))))),
+    crs = 4326))
+  count_only <- transform(cells, catch_weight_mt = NA_real_, catch_count = c(5, 10, NA))
+  expect_equal(map_shading(count_only)$title, "Catch (count)")
+  expect_s3_class(dataset_map(count_only), "leaflet")
+  nothing <- transform(cells, catch_weight_mt = c(0, -1, NA), catch_count = NA_real_)
+  expect_null(map_shading(nothing))
+  expect_s3_class(dataset_map(nothing), "leaflet")
+  some <- transform(cells, catch_weight_mt = c(2, NA, -1), catch_count = 1)
+  expect_equal(map_shading(some)$values, c(2, NA, NA))
+  expect_s3_class(dataset_map(some), "leaflet")
+})
+
 test_that("background jobs run a preview in a separate process", {
   con <- test_con()
   path <- withr::local_tempfile(fileext = ".sqlite")
